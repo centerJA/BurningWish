@@ -72,6 +72,28 @@ body {
   line-height: 1.6;
 }
 
+/* ---------- file:// warning banner ---------- */
+.filewarning {
+  background: var(--char);
+  border: 1px solid var(--char-line);
+  border-left: 3px solid var(--flame);
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.85rem;
+  line-height: 1.7;
+  color: var(--mozzarella-dim);
+}
+.filewarning strong { color: var(--flame); }
+.filewarning code {
+  font-family: var(--mono);
+  background: var(--crust);
+  padding: 0.1em 0.4em;
+  border-radius: 4px;
+  font-size: 0.85em;
+  color: var(--mozzarella);
+}
+
 /* ---------- order slip: signature element (破れた伝票風) ---------- */
 .slip {
   position: relative;
@@ -224,6 +246,10 @@ body {
     <p class="signboard__sub">他サイトのURLを入れると、そのHTMLを取得してここに表示します。</p>
   </header>
 
+  <div id="fileWarning" class="filewarning" hidden>
+    <p><strong>ヒント:</strong> このファイルを <code>file://</code>から直接開いていませんか?その場合、ブラウザの制限で取得が失敗しやすくなります(特にSafariで顕著です)。ターミナルでこのフォルダに移動して <code>python3 -m http.server 8000</code> を実行し、<code>http://localhost:8000/</code> からアクセスすると改善することがあります。</p>
+  </div>
+
   <section class="slip" aria-labelledby="orderLabel">
     <p class="slip__label" id="orderLabel">Order — 取得するURL</p>
     <form id="fetchForm" class="slip__form">
@@ -277,8 +303,15 @@ body {
   var tabSource = document.getElementById('tabSource');
   var panelPreview = document.getElementById('panelPreview');
   var panelSource = document.getElementById('panelSource');
+  var fileWarning = document.getElementById('fileWarning');
 
   var MAX_SOURCE_LENGTH = 200000;
+  var IS_FILE_PROTOCOL = window.location.protocol === 'file:';
+
+  // file:// で直接開かれている場合は上部に注意書きを表示する
+  if (IS_FILE_PROTOCOL && fileWarning) {
+    fileWarning.hidden = false;
+  }
 
   // 無料のCORSプロキシを順番に試す(1つ目が失敗したら次を試す)
   var PROXIES = [
@@ -387,7 +420,10 @@ body {
       emptyState.hidden = false;
       resultFrame.hidden = true;
       sourceCode.textContent = '';
-      setStatus('取得できませんでした(' + err.message + ')。サイト側の制限やネットワーク状況をご確認ください。', 'error');
+      var hint = IS_FILE_PROTOCOL
+        ? ' file:// から直接開いている場合、ローカルサーバー経由(例: python3 -m http.server)で開くと解決することがあります。'
+        : ' 少し時間をおいて再試行するか、別のURLでお試しください。';
+      setStatus('取得できませんでした(' + err.message + ')。サイト側の制限やネットワーク状況をご確認ください。' + hint, 'error');
     } finally {
       loadBtn.disabled = false;
       loadBtn.textContent = '取得する';
