@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<title>HTML取り寄せ屋 — 他サイトのHTMLを取得して表示</title>
+<meta name="description" content="URLを入力するだけで、他のウェブサイトのHTMLを取得してその場に表示するシンプルなビューアーツールです。">
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --crust: #1B120D;
+  --char: #2E2016;
+  --char-line: #4A3527;
+  --marinara: #D6432B;
+  --marinara-dark: #A6321F;
+  --marinara-light: #E8654A;
+  --mozzarella: #F3E9D2;
+  --mozzarella-dim: #B8A98A;
+  --basil: #6FA050;
+  --flame: #E8971E;
+  --radius: 14px;
+  --mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+  --sans: 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic', sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; padding: 0; min-height: 100%; }
+
+body {
+  background-color: var(--crust);
+  background-image:
+    radial-gradient(circle at 20% 0%, rgba(214,67,43,0.10), transparent 40%),
+    radial-gradient(circle at 90% 10%, rgba(232,151,30,0.08), transparent 35%);
+  color: var(--mozzarella);
+  font-family: var(--sans);
+  line-height: 1.5;
+}
+
+.stage {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: clamp(1.25rem, 4vw, 3rem) clamp(1rem, 4vw, 1.5rem) 3rem;
+}
+
+/* ---------- header ---------- */
+.signboard { text-align: center; margin-bottom: 2rem; }
+.signboard__eyebrow {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.28em;
+  color: var(--flame);
+  text-transform: uppercase;
+  margin: 0 0 0.6rem;
+}
+.signboard__title {
+  font-weight: 900;
+  font-size: clamp(1.6rem, 5vw, 2.4rem);
+  letter-spacing: -0.01em;
+  margin: 0 0 0.6rem;
+}
+.signboard__sub {
+  font-weight: 500;
+  font-size: 0.95rem;
+  color: var(--mozzarella-dim);
+  max-width: 46ch;
+  margin: 0 auto;
+  line-height: 1.6;
+}
+
+/* ---------- order slip: signature element (破れた伝票風) ---------- */
+.slip {
+  position: relative;
+  background: var(--char);
+  border: 1px solid var(--char-line);
+  border-radius: var(--radius);
+  padding: calc(1.75rem + 12px) 1.5rem 1.5rem;
+  margin-bottom: 1.75rem;
+  box-shadow: 0 18px 34px rgba(0,0,0,0.35);
+  clip-path: polygon(
+    0% 0px, 10% 12px, 20% 0px, 30% 12px, 40% 0px, 50% 12px,
+    60% 0px, 70% 12px, 80% 0px, 90% 12px, 100% 0px,
+    100% 100%, 0% 100%
+  );
+}
+.slip__label {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  color: var(--flame);
+  text-transform: uppercase;
+  margin: 0 0 0.85rem;
+}
+.slip__form { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.slip__input {
+  flex: 1 1 260px;
+  background: var(--crust);
+  border: 1px solid var(--char-line);
+  border-radius: 8px;
+  padding: 0.75rem 0.9rem;
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  color: var(--mozzarella);
+}
+.slip__input::placeholder { color: var(--mozzarella-dim); opacity: 0.6; }
+.slip__input:focus-visible { outline: 2px solid var(--flame); outline-offset: 2px; }
+
+.slip__button {
+  flex: 0 0 auto;
+  min-width: 7.5em;
+  background: var(--marinara-dark);
+  border: 1px solid var(--marinara);
+  color: var(--mozzarella);
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 0.95rem;
+  padding: 0.75rem 1.4rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+.slip__button:hover { background: var(--marinara); }
+.slip__button:active { transform: translateY(1px); }
+.slip__button:focus-visible { outline: 2px solid var(--flame); outline-offset: 2px; }
+.slip__button:disabled { opacity: 0.6; cursor: progress; }
+
+.slip__status {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--mozzarella-dim);
+  margin: 0.9rem 0 0;
+  line-height: 1.5;
+}
+.slip__status[data-tone="loading"] { color: var(--flame); }
+.slip__status[data-tone="success"] { color: var(--basil); }
+.slip__status[data-tone="error"] { color: var(--marinara-light); }
+
+/* ---------- screen: output area ---------- */
+.screen {
+  background: var(--char);
+  border: 1px solid var(--char-line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 18px 34px rgba(0,0,0,0.3);
+}
+.screen__tabs { display: flex; border-bottom: 1px solid var(--char-line); }
+.screen__tab {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: transparent;
+  border: none;
+  color: var(--mozzarella-dim);
+  padding: 0.8rem 1.1rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.screen__tab.is-active { color: var(--mozzarella); border-bottom-color: var(--marinara); }
+.screen__tab:focus-visible { outline: 2px solid var(--flame); outline-offset: -2px; }
+
+.screen__body { min-height: 420px; }
+
+.screen__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 420px;
+  color: var(--mozzarella-dim);
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 2rem;
+}
+.screen__empty[hidden] { display: none; }
+
+.screen__frame { width: 100%; min-height: 420px; height: 60vh; border: 0; background: #fff; display: block; }
+.screen__frame[hidden] { display: none; }
+
+.screen__source {
+  margin: 0;
+  padding: 1.1rem;
+  max-height: 60vh;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--mozzarella-dim);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ---------- footer ---------- */
+.notes { margin-top: 1.5rem; font-size: 0.78rem; line-height: 1.7; color: var(--mozzarella-dim); opacity: 0.85; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
+
+@media (max-width: 480px) {
+  .slip__form { flex-direction: column; }
+  .slip__button { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+<noscript>
+  <p style="padding:1rem;text-align:center;">このツールを使うには JavaScript を有効にしてください。</p>
+</noscript>
+
+<div class="stage">
+  <header class="signboard">
+    <p class="signboard__eyebrow">Web Proxy Viewer</p>
+    <h1 class="signboard__title">🍕 HTML取り寄せ屋</h1>
+    <p class="signboard__sub">他サイトのURLを入れると、そのHTMLを取得してここに表示します。</p>
+  </header>
+
+  <section class="slip" aria-labelledby="orderLabel">
+    <p class="slip__label" id="orderLabel">Order — 取得するURL</p>
+    <form id="fetchForm" class="slip__form">
+      <label for="urlInput" class="sr-only">取得したいサイトのURL</label>
+      <input
+        type="text"
+        id="urlInput"
+        class="slip__input"
+        placeholder="https://example.com"
+        autocomplete="off"
+        inputmode="url"
+      >
+      <button type="submit" id="loadBtn" class="slip__button">取得する</button>
+    </form>
+    <p id="statusLine" class="slip__status" role="status" aria-live="polite">URLを入力して「取得する」を押してください。</p>
+  </section>
+
+  <section class="screen" aria-label="取得結果">
+    <div class="screen__tabs" role="tablist">
+      <button type="button" class="screen__tab is-active" id="tabPreview" role="tab" aria-selected="true" aria-controls="panelPreview">表示</button>
+      <button type="button" class="screen__tab" id="tabSource" role="tab" aria-selected="false" aria-controls="panelSource">ソース</button>
+    </div>
+    <div class="screen__body">
+      <div id="panelPreview" class="screen__panel" role="tabpanel" aria-labelledby="tabPreview">
+        <div id="emptyState" class="screen__empty">
+          <p>上のURL欄にアドレスを入力して「取得する」を押すと、ここにプレビューが表示されます。</p>
+        </div>
+        <iframe id="resultFrame" class="screen__frame" title="取得したサイトのプレビュー" sandbox="allow-scripts allow-popups allow-forms allow-popups-to-escape-sandbox" hidden></iframe>
+      </div>
+      <div id="panelSource" class="screen__panel" role="tabpanel" aria-labelledby="tabSource" hidden>
+        <pre class="screen__source"><code id="sourceCode"></code></pre>
+      </div>
+    </div>
+  </section>
+
+  <p class="notes">※ このツールは無料の公開CORSプロキシ(allorigins.win / codetabs.com)を経由して他サイトのHTMLを取得しています。ログインが必要なページ、フレーム埋め込みを制限しているサイト、厳格なセキュリティポリシー(CSP)を持つサイトなどは正しく表示されない場合があります。取得先サイトの利用規約の範囲でご利用ください。</p>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var form = document.getElementById('fetchForm');
+  var urlInput = document.getElementById('urlInput');
+  var loadBtn = document.getElementById('loadBtn');
+  var statusLine = document.getElementById('statusLine');
+  var resultFrame = document.getElementById('resultFrame');
+  var emptyState = document.getElementById('emptyState');
+  var sourceCode = document.getElementById('sourceCode');
+  var tabPreview = document.getElementById('tabPreview');
+  var tabSource = document.getElementById('tabSource');
+  var panelPreview = document.getElementById('panelPreview');
+  var panelSource = document.getElementById('panelSource');
+
+  var MAX_SOURCE_LENGTH = 200000;
+
+  // 無料のCORSプロキシを順番に試す(1つ目が失敗したら次を試す)
+  var PROXIES = [
+    function (url) { return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url); },
+    function (url) { return 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url); }
+  ];
+
+  function normalizeUrl(raw) {
+    var value = raw.trim();
+    if (!value) return null;
+    var withScheme = /^https?:\/\//i.test(value) ? value : 'https://' + value;
+    try {
+      return new URL(withScheme).href;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function setStatus(message, tone) {
+    statusLine.textContent = message;
+    statusLine.dataset.tone = tone || 'neutral';
+  }
+
+  function stripMetaCSP(html) {
+    // <meta http-equiv="Content-Security-Policy"> が残っていると
+    // iframe内で外部CSS/JS/画像がブロックされやすいため取り除く
+    return html.replace(/<meta[^>]+http-equiv=["']?content-security-policy["']?[^>]*>/gi, '');
+  }
+
+  function injectBase(html, baseHref) {
+    // 相対パスのリンクや画像が元サイト基準で解決されるよう <base> を注入
+    if (/<base[\s>]/i.test(html)) return html;
+    if (/<head[^>]*>/i.test(html)) {
+      return html.replace(/<head([^>]*)>/i, '<head$1><base href="' + baseHref + '">');
+    }
+    if (/<html[^>]*>/i.test(html)) {
+      return html.replace(/<html([^>]*)>/i, '<html$1><head><base href="' + baseHref + '"></head>');
+    }
+    return '<base href="' + baseHref + '">' + html;
+  }
+
+  async function fetchViaProxies(targetUrl) {
+    var lastError = null;
+    for (var i = 0; i < PROXIES.length; i++) {
+      var proxyUrl = PROXIES[i](targetUrl);
+      try {
+        var res = await fetch(proxyUrl);
+        if (!res.ok) {
+          lastError = new Error('HTTP ' + res.status);
+          continue;
+        }
+        var text = await res.text();
+        if (!text || !text.trim()) {
+          lastError = new Error('空のレスポンス');
+          continue;
+        }
+        return text;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    throw lastError || new Error('すべてのプロキシで取得に失敗しました');
+  }
+
+  function showTab(which) {
+    var previewActive = which === 'preview';
+    tabPreview.classList.toggle('is-active', previewActive);
+    tabSource.classList.toggle('is-active', !previewActive);
+    tabPreview.setAttribute('aria-selected', String(previewActive));
+    tabSource.setAttribute('aria-selected', String(!previewActive));
+    panelPreview.hidden = !previewActive;
+    panelSource.hidden = previewActive;
+  }
+
+  tabPreview.addEventListener('click', function () { showTab('preview'); });
+  tabSource.addEventListener('click', function () { showTab('source'); });
+
+  form.addEventListener('submit', async function (event) {
+    event.preventDefault();
+    var targetUrl = normalizeUrl(urlInput.value);
+
+    if (!targetUrl) {
+      setStatus('URLの形式が正しくありません。例: https://example.com', 'error');
+      urlInput.focus();
+      return;
+    }
+
+    loadBtn.disabled = true;
+    loadBtn.textContent = '取得中…';
+    setStatus('取得中… ' + targetUrl, 'loading');
+
+    try {
+      var html = await fetchViaProxies(targetUrl);
+      var cleaned = stripMetaCSP(html);
+      var finalHtml = injectBase(cleaned, targetUrl);
+
+      emptyState.hidden = true;
+      resultFrame.hidden = false;
+      resultFrame.srcdoc = finalHtml;
+      sourceCode.textContent = html.length > MAX_SOURCE_LENGTH
+        ? html.slice(0, MAX_SOURCE_LENGTH) + '\n\n… (長いため以降は省略されました)'
+        : html;
+
+      setStatus('できあがり! ' + targetUrl + ' を表示しています', 'success');
+    } catch (err) {
+      emptyState.hidden = false;
+      resultFrame.hidden = true;
+      sourceCode.textContent = '';
+      setStatus('取得できませんでした(' + err.message + ')。サイト側の制限やネットワーク状況をご確認ください。', 'error');
+    } finally {
+      loadBtn.disabled = false;
+      loadBtn.textContent = '取得する';
+    }
+  });
+})();
+</script>
+</body>
+</html>
