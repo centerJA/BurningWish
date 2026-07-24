@@ -308,6 +308,42 @@ body {
   var MAX_SOURCE_LENGTH = 200000;
   var TIMEOUT_MS = 10000;
   var IS_FILE_PROTOCOL = window.location.protocol === 'file:';
+  var isFetching = false;
+
+  // フェッチしたページの中に注入するスクリプト。
+  // リンククリックと GET フォーム送信を横取りし、直接ナビゲートさせる代わりに
+  // postMessage で親(このツール)に伝えて、同じ取得パイプラインを再実行させる。
+  // (POSTフォームは対象外。今まで通りブラウザの直接ナビゲーションに任せる)
+  var NAV_SCRIPT_SOURCE = [
+    '(function () {',
+    '  function toAbsolute(u) { try { return new URL(u, document.baseURI).href; } catch (e) { return null; } }',
+    '  document.addEventListener("click", function (e) {',
+    '    var el = e.target && e.target.closest ? e.target.closest("a[href]") : null;',
+    '    if (!el) return;',
+    '    var href = el.getAttribute("href");',
+    '    if (!href || /^(#|javascript:|mailto:|tel:)/i.test(href)) return;',
+    '    var abs = toAbsolute(href);',
+    '    if (!abs) return;',
+    '    e.preventDefault();',
+    '    parent.postMessage({ source: "html-toriyoseya", url: abs }, "*");',
+    '  }, true);',
+    '  document.addEventListener("submit", function (e) {',
+    '    var form = e.target;',
+    '    if (!form || form.tagName !== "FORM") return;',
+    '    var method = (form.getAttribute("method") || "get").toLowerCase();',
+    '    if (method !== "get") return;',
+    '    var action = form.getAttribute("action") || document.baseURI;',
+    '    var absAction = toAbsolute(action);',
+    '    if (!absAction) return;',
+    '    var urlObj;',
+    '    try { urlObj = new URL(absAction); } catch (e2) { return; }',
+    '    e.preventDefault();',
+    '    var data = new FormData(form);',
+    '    data.forEach(function (value, key) { urlObj.searchParams.set(key, value); });',
+    '    parent.postMessage({ source: "html-toriyoseya", url: urlObj.href }, "*");',
+    '  }, true);',
+    '})();'
+  ].join('\n');
 
   // file:// で直接開かれている場合は上部に注意書きを表示する
   if (IS_FILE_PROTOCOL && fileWarning) {
