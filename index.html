@@ -242,7 +242,7 @@ body {
 <div class="stage">
   <header class="signboard">
     <p class="signboard__eyebrow">Web Proxy Viewer</p>
-    <h1 class="signboard__title">🍕 HTML取り寄せ屋</h1>
+    <h1 class="signboard__title">HTML取り寄せ屋v3</h1>
     <p class="signboard__sub">他サイトのURLを入れると、そのHTMLを取得してここに表示します。</p>
   </header>
 
@@ -306,6 +306,7 @@ body {
   var fileWarning = document.getElementById('fileWarning');
 
   var MAX_SOURCE_LENGTH = 200000;
+  var TIMEOUT_MS = 10000;
   var IS_FILE_PROTOCOL = window.location.protocol === 'file:';
 
   // file:// で直接開かれている場合は上部に注意書きを表示する
@@ -314,10 +315,20 @@ body {
   }
 
   // 無料のCORSプロキシを順番に試す(1つ目が失敗したら次を試す)
+  // ラベル付きにして、どのプロキシがどう失敗したか個別に表示できるようにする
   var PROXIES = [
-    function (url) { return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url); },
-    function (url) { return 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url); }
+    { label: 'AllOrigins', build: function (url) { return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url); } },
+    { label: 'CodeTabs', build: function (url) { return 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url); } },
+    { label: 'CorsProxy.io', build: function (url) { return 'https://corsproxy.io/?url=' + encodeURIComponent(url); } }
   ];
+
+  function fetchWithTimeout(url, ms) {
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, ms);
+    return fetch(url, { signal: controller.signal }).finally(function () {
+      clearTimeout(timer);
+    });
+  }
 
   function normalizeUrl(raw) {
     var value = raw.trim();
