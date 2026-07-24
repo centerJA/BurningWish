@@ -242,7 +242,7 @@ body {
 <div class="stage">
   <header class="signboard">
     <p class="signboard__eyebrow">Web Proxy Viewer</p>
-    <h1 class="signboard__title">HTML取り寄せ屋v3</h1>
+    <h1 class="signboard__title">🍕 HTML取り寄せ屋</h1>
     <p class="signboard__sub">他サイトのURLを入れると、そのHTMLを取得してここに表示します。</p>
   </header>
 
@@ -285,7 +285,7 @@ body {
     </div>
   </section>
 
-  <p class="notes">※ このツールは無料の公開CORSプロキシ(allorigins.win / codetabs.com)を経由して他サイトのHTMLを取得しています。ログインが必要なページ、フレーム埋め込みを制限しているサイト、厳格なセキュリティポリシー(CSP)を持つサイトなどは正しく表示されない場合があります。取得先サイトの利用規約の範囲でご利用ください。</p>
+  <p class="notes">※ このツールは無料の公開CORSプロキシ(allorigins.win → codetabs.com → corsproxy.io の順)を経由して他サイトのHTMLを取得しています。1つ失敗しても自動で次を試します。ログインが必要なページ、フレーム埋め込みを制限しているサイト、厳格なセキュリティポリシー(CSP)を持つサイト、Googleのようにボット対策が強いサイトは正しく表示されない場合があります。取得先サイトの利用規約の範囲でご利用ください。</p>
 </div>
 
 <script>
@@ -365,26 +365,29 @@ body {
   }
 
   async function fetchViaProxies(targetUrl) {
-    var lastError = null;
+    var errors = [];
     for (var i = 0; i < PROXIES.length; i++) {
-      var proxyUrl = PROXIES[i](targetUrl);
+      var proxy = PROXIES[i];
+      var proxyUrl = proxy.build(targetUrl);
+      setStatus('取得中…(' + proxy.label + ' を試行中) ' + targetUrl, 'loading');
       try {
-        var res = await fetch(proxyUrl);
+        var res = await fetchWithTimeout(proxyUrl, TIMEOUT_MS);
         if (!res.ok) {
-          lastError = new Error('HTTP ' + res.status);
+          errors.push(proxy.label + ': HTTP ' + res.status);
           continue;
         }
         var text = await res.text();
         if (!text || !text.trim()) {
-          lastError = new Error('空のレスポンス');
+          errors.push(proxy.label + ': 空のレスポンス');
           continue;
         }
         return text;
       } catch (err) {
-        lastError = err;
+        var reason = err.name === 'AbortError' ? 'タイムアウト' : err.message;
+        errors.push(proxy.label + ': ' + reason);
       }
     }
-    throw lastError || new Error('すべてのプロキシで取得に失敗しました');
+    throw new Error(errors.length ? errors.join(' / ') : 'すべてのプロキシで取得に失敗しました');
   }
 
   function showTab(which) {
