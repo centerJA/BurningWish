@@ -1,8 +1,25 @@
+// Cloudflare Worker本体。
+//
+// wrangler.jsonc の "run_worker_first": ["/proxy"] により、
+// このスクリプトは /proxy 宛てのリクエストのときだけ呼ばれます。
+// それ以外のパス(index.html など)は Cloudflare が直接、静的アセットとして返すので、
+// ここには来ません(念のためフォールバックとして env.ASSETS.fetch も書いています)。
 
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
 
-export async function onRequestGet(context) {
-  const requestUrl = new URL(context.request.url);
-  const target = requestUrl.searchParams.get("url");
+    if (url.pathname === "/proxy") {
+      return handleProxy(url);
+    }
+
+    // 通常はここに来ないはずのフォールバック
+    return env.ASSETS.fetch(request);
+  }
+};
+
+async function handleProxy(url) {
+  const target = url.searchParams.get("url");
 
   if (!target) {
     return new Response(

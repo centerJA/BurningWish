@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "burningwish",
+  "compatibility_date": "2026-07-24",
+  "main": "worker.js",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": ".",
+    "binding": "ASSETS",
+    "run_worker_first": ["/proxy"]
+  },
+  "compatibility_flags": ["nodejs_compat"]
+}
