@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="dark">
-<title>HTML取り寄せ屋 v5</title>
+<title>HTML取り寄せ屋 six</title>
 <meta name="description" content="URLを入力するだけで、他のウェブサイトのHTMLを取得してその場に表示するシンプルなビューアーツールです。">
 <link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -85,7 +85,7 @@ body {
   color: var(--mozzarella-dim);
 }
 .filewarning strong { color: var(--flame); }
-.filewarning code {
+.filewarning code, .notes code {
   font-family: var(--mono);
   background: var(--crust);
   padding: 0.1em 0.4em;
@@ -247,7 +247,7 @@ body {
   </header>
 
   <div id="fileWarning" class="filewarning" hidden>
-    <p><strong>ヒント:</strong> このファイルを <code>file://</code>から直接開いていませんか?その場合、ブラウザの制限で取得が失敗しやすくなります(特にSafariで顕著です)。ターミナルでこのフォルダに移動して <code>python3 -m http.server 8000</code> を実行し、<code>http://localhost:8000/</code> からアクセスすると改善することがあります。</p>
+    <p><strong>ヒント:</strong> このファイルを <code>file://</code>から直接開いていませんか?その場合、他サイトの取得が失敗しやすくなります。同封の <code>server.py</code> をこのフォルダで実行すると(<code>python3 server.py</code>)、配信とプロキシを両方まかなえるので安定します。<code>http://localhost:8000/</code> からアクセスしてください。</p>
   </div>
 
   <section class="slip" aria-labelledby="orderLabel">
@@ -285,7 +285,7 @@ body {
     </div>
   </section>
 
-  <p class="notes">※ このツールは無料の公開CORSプロキシ(allorigins.win → codetabs.com → corsproxy.io の順)を経由して他サイトのHTMLを取得しています。1つ失敗しても自動で次を試します。ログインが必要なページ、フレーム埋め込みを制限しているサイト、厳格なセキュリティポリシー(CSP)を持つサイト、Googleのようにボット対策が強いサイトは正しく表示されない場合があります。取得先サイトの利用規約の範囲でご利用ください。</p>
+  <p class="notes">※ 同封の <code>server.py</code> を実行すると(<code>python3 server.py</code> → <code>http://localhost:8000/</code>)、ローカルプロキシが最優先で使われ最も安定します。動いていない場合は無料の公開CORSプロキシ(allorigins.win → codetabs.com → corsproxy.io の順)に自動フォールバックしますが、これらは無料サービスのため混雑時に失敗することがあります。ログインが必要なページや、Googleのようにボット対策が強いサイトも正しく表示されない場合があります。取得先サイトの利用規約の範囲でご利用ください。</p>
 </div>
 
 <script>
@@ -314,9 +314,10 @@ body {
     fileWarning.hidden = false;
   }
 
-  // 無料のCORSプロキシを順番に試す(1つ目が失敗したら次を試す)
-  // ラベル付きにして、どのプロキシがどう失敗したか個別に表示できるようにする
+  // 一番信頼できるのは同封の server.py によるローカルプロキシ(動いていれば最優先で使う)。
+  // 動いていない/file://で開いている場合は自動的に公開プロキシへフォールバックする。
   var PROXIES = [
+    { label: 'ローカルプロキシ', build: function (url) { return '/proxy?url=' + encodeURIComponent(url); } },
     { label: 'AllOrigins', build: function (url) { return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url); } },
     { label: 'CodeTabs', build: function (url) { return 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url); } },
     { label: 'CorsProxy.io', build: function (url) { return 'https://corsproxy.io/?url=' + encodeURIComponent(url); } }
@@ -435,8 +436,8 @@ body {
       resultFrame.hidden = true;
       sourceCode.textContent = '';
       var hint = IS_FILE_PROTOCOL
-        ? ' file:// から直接開いている場合、ローカルサーバー経由(例: python3 -m http.server)で開くと解決することがあります。'
-        : ' 少し時間をおいて再試行するか、別のURLでお試しください。';
+        ? ' file:// から直接開いている場合、同封の server.py を実行(python3 server.py)して http://localhost:8000/ から開くと解決することがあります。'
+        : ' 公開プロキシが混雑している可能性があります。同封の server.py を実行するとローカルプロキシが最優先で使われ安定します。';
       setStatus('取得できませんでした(' + err.message + ')。サイト側の制限やネットワーク状況をご確認ください。' + hint, 'error');
     } finally {
       loadBtn.disabled = false;
