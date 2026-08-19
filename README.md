@@ -51,6 +51,11 @@ npx wrangler dev
 
 - **リダイレクト**: `redirect: "manual"` で受け、`/proxy?url=<解決後>` への 302 に
   差し替える。iframe 自身の URL が常に正確になり、アドレスバーが追従する
+- **自オリジンへ逃げた遷移の救済**: ページが `/foo` のような自オリジンの絶対パスへ
+  遷移した場合、本来の行き先へ送り直す。文脈は Referer から取り、取れないときは
+  HTML 応答時に残しておく `bwctx` Cookie を使う(Referer が付かない遷移があるため)。
+  あわせて応答に `Referrer-Policy: same-origin` を設定し、
+  自オリジンには完全な Referer を送りつつ外部へは一切送らないようにしている
 - **Cookie**: 上流の `Set-Cookie` を登録可能ドメイン単位でまとめ、自オリジンの
   `bwcj_<domain>` cookie (HttpOnly) に保存して次回リクエストで送り返す
 - **埋め込み阻害ヘッダ**: `X-Frame-Options` / `Content-Security-Policy` /

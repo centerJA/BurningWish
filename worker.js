@@ -35,6 +35,8 @@ const STRIP_RESPONSE_HEADERS = [
   "report-to",
   "nel",
   "clear-site-data",
+  // 自前の Referrer-Policy を設定するので上流の指定は落とす
+  "referrer-policy",
   // 本文を変換/再エンコードするため、長さと符号化は必ず作り直す
   "content-encoding",
   "content-length",
@@ -81,19 +83,55 @@ export default {
 
 /* ---------------------------------------------------------------- routing */
 
-function rescueFromReferer(request, url) {
-  const ref = request.headers.get("Referer");
-  if (!ref) return null;
-  let r;
-  try {
-    r = new URL(ref);
-  } catch {
-    return null;
-  }
-  if (r.origin !== url.origin || r.pathname !== PROXY_PATH) return null;
+const CONTEXT_COOKIE = "bwctx";
 
-  const context = r.searchParams.get("url");
-  if (!context) return null;
+/** 直近に表示していたページを覚えておく Cookie(Referer が落ちる環境の保険) */
+function contextCookie(href, secure) {
+  const flags = ["Path=/", "Max-Age=1800", "SameSite=Lax"];
+  if (secure) flags.push("Secure");
+  return `${CONTEXT_COOKIE}=${encodeURIComponent(href)}; ${flags.join("; ")}`;
+}
+
+function readContextCookie(request) {
+  const raw = request.headers.get("Cookie");
+  if (!raw) return null;
+  for (const part of raw.split(";")) {
+    const i = part.indexOf("=");
+    if (i < 0) continue;
+    if (part.slice(0, i).trim() !== CONTEXT_COOKIE) continue;
+    try {
+      return decodeURIComponent(part.slice(i + 1).trim());
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * プロキシ中のページが location.href = "/foo" のように自オリジンへ直接遷移した場合に、
+ * 本来の行き先へ送り直す。
+ *
+ * まず Referer から文脈を取り、取れなければ Cookie に残した直近ページを使う。
+ * (ブラウザや遷移の種類によっては Referer が付かないことがある)
+ */
+function rescueFromReferer(request, url) {
+  let context = null;
+
+  const ref = request.headers.get("Referer");
+  if (ref) {
+    try {
+      const r = new URL(ref);
+      if (r.origin === url.origin && r.pathname === PROXY_PATH) {
+        context = r.searchParams.get("url");
+      }
+    } catch {
+      /* 壊れた Referer は無視 */
+    }
+  }
+
+  if (!context) context = readContextCookie(request);
+  if (!context || !/^https?:/i.test(context)) return null;
 
   let resolved;
   try {
@@ -167,6 +205,9 @@ async function handleProxy(request, url) {
   for (const h of STRIP_RESPONSE_HEADERS) outHeaders.delete(h);
   outHeaders.set("Cache-Control", "no-store");
   outHeaders.set("Access-Control-Allow-Origin", "*");
+  // same-origin: 自オリジンへの遷移では完全な Referer を送り(文脈復元に必須)、
+  // 外部へは一切送らない(プロキシ URL の漏洩防止)。
+  outHeaders.set("Referrer-Policy", "same-origin");
   if (jarHeader) outHeaders.append("Set-Cookie", jarHeader);
 
   const rawType = upstream.headers.get("Content-Type") || "";
@@ -210,6 +251,8 @@ async function handleProxy(request, url) {
 
   // --- HTML ---
   outHeaders.set("Content-Type", "text/html; charset=utf-8");
+  // Referer が落ちる環境でも文脈を復元できるよう、現在のページを Cookie に残す
+  outHeaders.append("Set-Cookie", contextCookie(targetUrl.href, isSecure));
 
   // HTMLRewriter は UTF-8 前提。Shift_JIS / EUC-JP などはここで弾いて
   // デコード → 正規表現による書き換え → UTF-8 として返す。
