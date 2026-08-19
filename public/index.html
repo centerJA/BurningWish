@@ -332,6 +332,7 @@ body {
         <button type="button" class="chip" data-url="https://search.brave.com/search?q=BurningWish">Brave Search</button>
         <button type="button" class="chip" data-url="https://news.yahoo.co.jp/">Yahoo!ニュース</button>
         <button type="button" class="chip" data-url="https://github.com/">GitHub</button>
+        <button type="button" class="chip" data-url="https://www.youtube.com/watch?v=jNQXAC9IVRw">YouTube</button>
         <button type="button" class="chip" data-url="https://example.com/">example.com</button>
       </div>
     </section>
@@ -340,7 +341,8 @@ body {
       id="frame"
       class="frame"
       title="閲覧中のサイト"
-      sandbox="allow-scripts allow-forms allow-popups allow-modals allow-same-origin allow-downloads"
+      sandbox="allow-scripts allow-forms allow-popups allow-modals allow-same-origin allow-downloads allow-presentation"
+      allow="autoplay; fullscreen; encrypted-media; picture-in-picture; clipboard-write"
       hidden></iframe>
 
     <pre id="sourceView" class="source" hidden><code id="sourceCode"></code></pre>
@@ -363,7 +365,7 @@ body {
 (function () {
   'use strict';
 
-  var frame       = document.getElementById('frame');
+  var frame       = document.getElementById('frame');   // モード切替時に作り直すので再代入する
   var omni        = document.getElementById('omni');
   var omniForm    = document.getElementById('omniForm');
   var btnBack     = document.getElementById('btnBack');
@@ -397,6 +399,7 @@ body {
   var currentUrl = null;
   var suppressPush = false;
   var view = 'page';
+  var directMode = false;   // YouTube 埋め込みなど、プロキシを通さず直接読み込んでいる状態
 
   /* ------------------------------------------------------------- helpers */
 
@@ -424,6 +427,54 @@ body {
     return SEARCH_URL + encodeURIComponent(value);
   }
 
+  /**
+   * YouTube の動画 URL なら、公式埋め込みプレーヤーの URL を返す(それ以外は null)。
+   *
+   * YouTube の動画配信 URL (googlevideo.com) は取得時のクライアント IP を
+   * 署名に含むため、出口 IP が毎回変わる Cloudflare Workers 経由では必ず 403 になる。
+   * 一方、埋め込みプレーヤーは第三者サイトへの iframe 埋め込みが公式に想定されており、
+   * プロキシを通さず直接読み込めば利用者自身の回線で再生される。
+   */
+  function youtubeEmbed(rawUrl) {
+    var u;
+    try { u = new URL(rawUrl); } catch (e) { return null; }
+
+    var host = u.hostname.replace(/^www\./, '');
+    var id = null;
+    var list = null;
+
+    if (host === 'youtu.be') {
+      id = u.pathname.slice(1).split('/')[0];
+      list = u.searchParams.get('list');
+    } else if (/^(m\.|music\.)?youtube(-nocookie)?\.com$/.test(host)) {
+      var seg = u.pathname.split('/');
+      if (u.pathname === '/watch') id = u.searchParams.get('v');
+      else if (seg[1] === 'shorts' || seg[1] === 'embed' || seg[1] === 'live') id = seg[2];
+      list = u.searchParams.get('list');
+    }
+
+    if (id && !/^[\w-]{6,20}$/.test(id)) id = null;
+    if (!id && !list) return null;
+
+    var params = ['rel=0'];
+    if (list) params.push('list=' + encodeURIComponent(list));
+
+    var t = u.searchParams.get('t') || u.searchParams.get('start');
+    if (t) {
+      var sec = 0;
+      if (/^\d+$/.test(t)) {
+        sec = Number(t);
+      } else {
+        var m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.exec(t);
+        if (m) sec = Number(m[1] || 0) * 3600 + Number(m[2] || 0) * 60 + Number(m[3] || 0);
+      }
+      if (sec > 0) params.push('start=' + sec);
+    }
+
+    return 'https://www.youtube-nocookie.com/embed/' +
+      (id ? encodeURIComponent(id) : 'videoseries') + '?' + params.join('&');
+  }
+
   // iframe が今どの実 URL を見ているかを読む(同一オリジンなので参照できる)。
   // 読めない = クロスオリジン、つまりページがプロキシの外へ出てしまった状態。
   // location.replace / href は仕様上パッチできないため、この検知が最後の砦になる。
@@ -441,6 +492,32 @@ body {
       }
     } catch (e) { /* about:blank など */ }
     return { escaped: false, url: null };
+  }
+
+  /**
+   * iframe を指定 URL へ移動させる。
+   * 直前が別オリジン(YouTube 埋め込みなど)だと contentWindow 経由の遷移が効かないため、
+   * 同一オリジンで読める場合だけ location.replace を使う(iframe 側の履歴を増やさないため)。
+   */
+  function setFrameUrl(target) {
+    var sameOrigin = false;
+    try {
+      void frame.contentWindow.location.href;
+      sameOrigin = true;
+    } catch (e) {
+      sameOrigin = false;
+    }
+
+    if (sameOrigin) {
+      try {
+        frame.contentWindow.location.replace(target);
+        return;
+      } catch (e) { /* src 代入へ倒す */ }
+    }
+
+    // 同じ値の代入では再読み込みされないことがあるので、一度空にしてから入れる
+    if (frame.getAttribute('src') === target) frame.src = 'about:blank';
+    frame.src = target;
   }
 
   function startProgress() {
@@ -491,26 +568,45 @@ body {
     escapeCard.hidden = true;
     frame.hidden = (view !== 'page');
     startProgress();
-    setStatus('読み込み中… ' + url, 'loading');
 
-    var target = proxyUrl(url);
-    // location.replace を使い、iframe 側の履歴を無駄に増やさない
-    try {
-      frame.contentWindow.location.replace(target);
-    } catch (e) {
-      frame.src = target;
+    var embed = youtubeEmbed(url);
+    var wasDirect = directMode;
+    directMode = !!embed;
+
+    // プロキシ経由と直接読み込みを行き来するときはフレームを作り直す
+    if (wasDirect !== directMode) recreateFrame();
+
+    if (directMode) {
+      // 埋め込みプレーヤーはプロキシを通さない(通すと再生できない)
+      setStatus('YouTube プレーヤーを読み込み中… ' + url, 'loading');
+      setFrameUrl(embed);
+      updateNavButtons();
+      return;
     }
+
+    setStatus('読み込み中… ' + url, 'loading');
+    setFrameUrl(proxyUrl(url));
     updateNavButtons();
   }
 
-  frame.addEventListener('load', function () {
+  function onFrameLoad() {
     stopProgress();
+
+    if (directMode) {
+      // 意図してプロキシ外を読み込んでいるので、脱出検知の対象外
+      setStatus('YouTube プレーヤー(直接接続) — ' + (currentUrl || ''), 'success');
+      suppressPush = false;
+      updateNavButtons();
+      return;
+    }
+
     var state = readFrameState();
 
     if (state.escaped) {
       // 外部サイトへ直接飛ばされた。中身は読めないので案内を出して復帰させる。
+      // カードは iframe を覆う配置なので、iframe 自体は隠さない。
+      // (hidden にすると次に src を入れても読み込まれず、遷移できなくなる)
       escapeCard.hidden = false;
-      frame.hidden = true;
       setStatus('プロキシの外へ移動したため表示できません。', 'error');
       suppressPush = false;
       updateNavButtons();
@@ -531,12 +627,41 @@ body {
     setStatus(title ? title + ' — ' + (currentUrl || '') : (currentUrl || '表示しました'), 'success');
 
     if (view === 'source') loadSource();
-  });
+  }
+
+  frame.addEventListener('load', onFrameLoad);
+
+  /**
+   * iframe 要素ごと作り直す。
+   * プロキシ経由(自オリジン)と YouTube 埋め込み(別オリジン)を行き来すると、
+   * 既存フレームへの遷移指示が効かなかったり、前のページの load イベントが
+   * 遅れて届いて誤判定を起こす。新しい要素にすれば確実に初期状態から始まる。
+   */
+  function recreateFrame() {
+    var fresh = document.createElement('iframe');
+    fresh.id = 'frame';
+    fresh.className = frame.className;
+    fresh.title = frame.title;
+    fresh.setAttribute('sandbox', frame.getAttribute('sandbox'));
+    fresh.setAttribute('allow', frame.getAttribute('allow'));
+    fresh.hidden = frame.hidden;
+
+    frame.parentNode.replaceChild(fresh, frame);
+    frame = fresh;
+    frame.addEventListener('load', onFrameLoad);
+  }
 
   // 注入シムからの通知(pushState など、load が発火しない遷移を拾う)
   window.addEventListener('message', function (event) {
     var data = event.data;
     if (!data || data.__bw !== 'nav' || !data.url) return;
+
+    // プロキシ経由のページ内から YouTube の動画へ進んだ場合も埋め込みへ切り替える。
+    // (シムは <head> の時点で通知するので、重いページが描画される前に切り替わる)
+    if (!directMode && youtubeEmbed(data.url)) {
+      load(data.url);
+      return;
+    }
 
     currentUrl = data.url;
     if (document.activeElement !== omni) omni.value = data.url;
@@ -549,6 +674,7 @@ body {
   function showView(which) {
     view = which;
     var isPage = which === 'page';
+    if (isPage && directMode) escapeCard.hidden = true;
     tabPage.classList.toggle('is-active', isPage);
     tabSource.classList.toggle('is-active', !isPage);
     tabPage.setAttribute('aria-selected', String(isPage));
@@ -603,6 +729,7 @@ body {
   });
   btnHome.addEventListener('click', function () {
     currentUrl = null;
+    directMode = false;
     stack = [];
     index = -1;
     omni.value = '';

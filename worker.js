@@ -998,9 +998,14 @@ addEventListener("click",function(e){
   var h=a.getAttribute("href");
   if(!h||/^(#|javascript:|mailto:|tel:)/i.test(h))return;
   if(unprox(h))return;
+  var abs=toAbs(h);
+  if(!abs)return;
   var p=px(h);
   if(p===h)return;
   e.preventDefault();
+  /* 行き先を先に親へ知らせる。親は YouTube の動画 URL などを
+     埋め込みプレーヤーへ振り分けられる(SPA が動的に生成したリンク対策)。 */
+  tell(abs);
   location.assign(p);
 },true);
 addEventListener("submit",function(e){
