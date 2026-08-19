@@ -71,8 +71,10 @@ npx wrangler dev
 - **WebSocket は代理できない。** リアルタイム通信に依存する機能は動作しない
 - **画像が多いページでは一部が欠けることがある。** 100 枚の画像要求が Worker から
   一斉に上流へ飛ぶため、配信元(例: Wikimedia)のレート制限に当たる。再試行で緩和している
-- **Google などボット対策の強いサイト**は、データセンター IP からのアクセスとして
-  判定され `/sorry/` に飛ばされることがある。アドレスバーからの検索は DuckDuckGo を既定にしている
+- **検索エンジンはボット対策が厳しい。** Cloudflare のデータセンター IP からのアクセスに対し、
+  Google は `/sorry/` へ飛ばし、通常版 DuckDuckGo・Mojeek・Startpage・Ecosia は CAPTCHA や
+  403 を返す。実測で通ったのは **DuckDuckGo Lite** (`lite.duckduckgo.com`) なので、
+  アドレスバーからの検索はこれを既定にしている(Brave Search / Bing も通る)
 - ページ内の JS が `location.hostname` を読むと、プロキシ側のホスト名が見える
   (`parent.location` 経由なら本来の URL を返すよう偽装している)
 
