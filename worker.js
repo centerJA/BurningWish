@@ -753,6 +753,9 @@ function buildHtmlRewriter(finalUrl) {
       }
     })
 
+    // インライン script 内の parent.location / top.location を矯正
+    .on("script", new ScriptRewriter())
+
     // インライン CSS
     .on("style", new StyleRewriter(state))
     .on("[style]", {
@@ -761,6 +764,39 @@ function buildHtmlRewriter(finalUrl) {
         if (v && v.includes("url(")) el.setAttribute("style", rewriteCss(decodeEntities(v), state.base));
       }
     });
+}
+
+/**
+ * インライン script 内の `parent.location` / `top.location` を `window.__bwLoc` に
+ * 置き換える。DuckDuckGo の中継ページのように
+ * `window.parent.location.replace("http://...")` で遷移するページを、
+ * window の関係性を壊さずにプロキシ内へ留めるための最小限の書き換え。
+ * 同一フレームの `location` は対象外(相対URLならサーバー側の Referer 救済が効く)。
+ */
+const FRAME_LOCATION_RE =
+  /\b(?:(?:window|self)\s*\.\s*)?(?:parent|top)\s*\.\s*location\b/g;
+
+function rewriteInlineScript(code) {
+  if (!code || code.indexOf("location") === -1) return code;
+  return code.replace(FRAME_LOCATION_RE, "window.__bwLoc");
+}
+
+/** script の中身も分割されて届くので、末尾まで貯めてから置換する */
+class ScriptRewriter {
+  constructor() {
+    this.buffer = "";
+  }
+  text(chunk) {
+    this.buffer += chunk.text;
+    if (chunk.lastInTextNode) {
+      const rewritten = rewriteInlineScript(this.buffer);
+      this.buffer = "";
+      // JS の "<" ">" "&" が壊れるため html:false は使えない
+      chunk.replace(rewritten, { html: true });
+    } else {
+      chunk.remove();
+    }
+  }
 }
 
 /** <style> の中身はテキストが分割されて届くので、末尾まで貯めてから置換する */
@@ -874,12 +910,16 @@ function navTo(u){var p=px(u);try{location.replace(p);}catch(e){location.href=p;
 
 /* --- フレーム脱出(frame busting)対策 ---
    location.replace / assign / href は非設定可能でパッチできない。
-   ただし window.parent は差し替えられるので、
-   parent.location.replace(...) 型の遷移(DuckDuckGo の中継ページなど)は
-   ここで捕まえてプロキシ経由に矯正する。
-   あわせて frameElement を null にして、埋め込み検知を避ける。 */
+   window.parent なら差し替えられるが、window.top は差し替えられないため、
+   parent だけ差し替えると window.parent !== window.top という本来ありえない
+   状態が生まれ、それを前提にしたサイト(Yahoo! JAPAN など)が無限ループに陥る。
+
+   そこで window の関係性には一切触れず、代わりに
+   インライン script 内の parent.location / top.location を
+   サーバー側で __bwLoc へ書き換える方式を採る。
+   __bwLoc は replace / assign / href 代入をプロキシ経由に矯正する。 */
 var BASE_URL=null;try{BASE_URL=new URL(BASE);}catch(e){}
-var fakeLoc=new Proxy({},{
+var __bwLocObj=new Proxy({},{
   get:function(t,k){
     if(k==="replace"||k==="assign")return function(u){navTo(u);};
     if(k==="reload")return function(){location.reload();};
@@ -889,22 +929,15 @@ var fakeLoc=new Proxy({},{
   },
   set:function(t,k,v){if(k==="href")navTo(v);return true;}
 });
-var fakeParent=new Proxy(window,{
-  get:function(t,k){
-    if(k==="location")return fakeLoc;
-    if(k==="parent"||k==="top"||k==="self"||k==="window")return fakeParent;
-    if(k==="frameElement")return null;
-    var v;try{v=t[k];}catch(e){return undefined;}
-    return typeof v==="function"?v.bind(t):v;
-  },
-  set:function(t,k,v){
-    if(k==="location"){navTo(v);return true;}
-    try{t[k]=v;}catch(e){}
-    return true;
-  }
-});
-try{Object.defineProperty(window,"parent",{configurable:true,get:function(){return fakeParent;}});}catch(e){}
-try{Object.defineProperty(window,"frameElement",{configurable:true,get:function(){return null;}});}catch(e){}
+/* アクセサにしておくと parent.location = "..." の直接代入型
+   (書き換え後は window.__bwLoc = "...")も遷移として扱える。 */
+try{
+  Object.defineProperty(window,"__bwLoc",{
+    configurable:true,
+    get:function(){return __bwLocObj;},
+    set:function(v){navTo(v);}
+  });
+}catch(e){window.__bwLoc=__bwLocObj;}
 
 var _fetch=window.fetch;
 if(_fetch)window.fetch=function(input,init){
@@ -934,7 +967,10 @@ window.open=function(u,n,f){try{u=px(u);}catch(e){}return _wopen.call(window,u,n
   var _orig=history[k];
   history[k]=function(s,t,u){
     var real=null;
-    if(u!=null){try{real=toAbs(u);u=px(u);}catch(e){}}
+    /* u が既に /proxy?url=... の形のこともある(SPA が location から組み立てた場合)。
+       その場合 BASE 基準で解決すると news.example.com/proxy?url=... のような
+       でたらめな URL になるため、先に unprox を試す。 */
+    if(u!=null){try{real=unprox(u)||toAbs(u);u=px(u);}catch(e){}}
     var r=_orig.call(history,s,t,u);
     if(real)tell(real);
     return r;

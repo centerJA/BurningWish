@@ -41,9 +41,10 @@ npx wrangler dev
 - `history.pushState` / `replaceState`(親へ現在 URL を通知してアドレスバーを同期)
 - `window.open`
 - 動的に生成された `a` / `form`(クリック・送信をキャプチャ段階で拾う)
-- **フレーム脱出対策**: `window.parent` を差し替え、`parent.location.replace(...)` 型の
-  遷移(DuckDuckGo の検索結果中継ページなど)をプロキシ経由へ矯正する。
-  `frameElement` は `null` を返して埋め込み検知も避ける
+- **フレーム脱出対策**: インライン script 内の `parent.location` / `top.location` を
+  サーバー側で `__bwLoc` へ書き換え、`parent.location.replace(...)` 型の遷移を
+  プロキシ経由へ矯正する。`__bwLoc` はアクセサなので `parent.location = url` の
+  直接代入型も拾える
 - Service Worker は経路を横取りして破綻させるため無効化
 
 ### そのほかの挙動
@@ -69,12 +70,19 @@ npx wrangler dev
   ページが自分自身を絶対 URL で外部サイトへ飛ばした場合は捕まえられない。
   その場合はプロキシの外へ出たことを検知して案内を表示し、戻れるようにしている
 - **WebSocket は代理できない。** リアルタイム通信に依存する機能は動作しない
-- **画像が多いページでは一部が欠けることがある。** 100 枚の画像要求が Worker から
-  一斉に上流へ飛ぶため、配信元(例: Wikimedia)のレート制限に当たる。再試行で緩和している
-- **検索エンジンはボット対策が厳しい。** Cloudflare のデータセンター IP からのアクセスに対し、
-  Google は `/sorry/` へ飛ばし、通常版 DuckDuckGo・Mojeek・Startpage・Ecosia は CAPTCHA や
-  403 を返す。実測で通ったのは **DuckDuckGo Lite** (`lite.duckduckgo.com`) なので、
-  アドレスバーからの検索はこれを既定にしている(Brave Search / Bing も通る)
+- 画像が多いページでは、ローカル dev(住宅 IP)だと配信元のレート制限に当たって
+  一部が欠けることがある。本番の Cloudflare エッジでは発生しない(実測 100/100)
+- **検索エンジンはボット対策が厳しい。** Cloudflare のデータセンター IP に対し、
+  Google は `/sorry/` へ、Mojeek・Startpage は CAPTCHA、Ecosia は 403 を返す。
+  **DuckDuckGo は Cookie を一切発行せず IP だけで判定する**ため、出口 IP が
+  毎回変わる Workers からだと CAPTCHA を通過しても次のリクエストで再び弾かれる
+  (本番実測: Lite 版でも 6 回に 1 回失敗)。
+  本番で 10 回試して安定したのは **Brave Search**(9/10)と Bing(10/10)。
+  Bing は結果リンクが JS リダイレクトの中継ページを挟むため、
+  直リンクを返す **Brave Search を既定**にしている
+- **重い SPA サイトでは、記事ページへ進むとプロキシの外へ出ることがある。**
+  外部 JS が絶対 URL で `location.href` を書き換える経路は仕様上捕まえられない。
+  検知して案内を表示し、戻れるようにしている(例: Yahoo!ニュースの個別記事)
 - ページ内の JS が `location.hostname` を読むと、プロキシ側のホスト名が見える
   (`parent.location` 経由なら本来の URL を返すよう偽装している)
 

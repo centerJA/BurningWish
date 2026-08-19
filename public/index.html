@@ -329,7 +329,7 @@ body {
       <p class="start__sub">URL を入力すると、そのサイトをこのページの中でそのまま閲覧できます。リンクもフォームもここで完結します。</p>
       <div class="chips" id="chips">
         <button type="button" class="chip" data-url="https://ja.wikipedia.org/">Wikipedia</button>
-        <button type="button" class="chip" data-url="https://lite.duckduckgo.com/lite/?q=BurningWish">DuckDuckGo</button>
+        <button type="button" class="chip" data-url="https://search.brave.com/search?q=BurningWish">Brave Search</button>
         <button type="button" class="chip" data-url="https://news.yahoo.co.jp/">Yahoo!ニュース</button>
         <button type="button" class="chip" data-url="https://github.com/">GitHub</button>
         <button type="button" class="chip" data-url="https://example.com/">example.com</button>
@@ -355,7 +355,7 @@ body {
 
   <div class="statusbar">
     <span id="status" class="statusbar__msg" role="status" aria-live="polite">URL を入力して Enter を押してください。</span>
-    <span class="statusbar__note">検索は DuckDuckGo Lite / WebSocket 依存の機能は動作しません</span>
+    <span class="statusbar__note">検索は Brave Search / WebSocket 依存の機能は動作しません</span>
   </div>
 </div>
 
@@ -381,9 +381,13 @@ body {
   var escapeCard  = document.getElementById('escapeCard');
   var escapeBack  = document.getElementById('escapeBack');
 
-  // DuckDuckGo Lite を使う。通常版(duckduckgo.com/html/)は Cloudflare の
-  // データセンター IP からのアクセスに CAPTCHA を出すが、Lite 版は通る。
-  var SEARCH_URL = 'https://lite.duckduckgo.com/lite/?q=';
+  // Brave Search を使う。
+  // DuckDuckGo は Cookie を一切発行せず IP だけでボット判定するため、
+  // 出口 IP が毎回変わる Cloudflare Workers からだと CAPTCHA を通過しても
+  // 次のリクエストで再び弾かれる(本番実測: Lite 版でも 6 回に 1 回失敗)。
+  // Brave は同条件で 9/10 成功し、かつ結果が中継ページを挟まない直リンクなので
+  // クリック後にプロキシ外へ出てしまう事故も起きない。
+  var SEARCH_URL = 'https://search.brave.com/search?q=';
   var MAX_SOURCE = 300000;
   var PROXY_PATH = '/proxy';
 
