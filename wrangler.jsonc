@@ -7,8 +7,15 @@
     "enabled": true
   },
   "assets": {
-    "directory": ".",
+    // 公開する静的ファイルは public/ だけに限定する。
+    // ここをプロジェクトルート(".")にすると、wrangler が生成する .wrangler/ を
+    // 自分で検知して無限リロードに陥り、ローカル dev が応答しなくなる。
+    // さらにルート指定では worker.js まで配信対象に含まれてしまう。
+    "directory": "./public",
     "binding": "ASSETS",
+    // /proxy だけ Worker を先に通す。アセットに存在しないパスは
+    // 自動的に Worker へ回るので、プロキシ中のページが自オリジンへ
+    // 逃げた場合の Referer 救済も従来どおり効く。
     "run_worker_first": ["/proxy"]
   },
   "compatibility_flags": ["nodejs_compat"]

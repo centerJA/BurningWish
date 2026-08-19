@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<title>BurningWish — サイト内ブラウザ</title>
+<meta name="description" content="URLを入力すると、他のウェブサイトをこのページの中でそのまま閲覧できるプロキシブラウザです。">
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:        #0A0A0B;
+  --surface:   #131316;
+  --surface-2: #1B1B20;
+  --surface-3: #23232A;
+  --line:      #26262C;
+  --text:      #E8E8EC;
+  --text-dim:  #8A8A94;
+  --accent:    #4CA6FF;
+  --accent-dim:#1D4E7A;
+  --ok:        #4ADE80;
+  --err:       #FF6B6B;
+  --radius:    10px;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  --sans: 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic', system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+.app { display: flex; flex-direction: column; height: 100%; }
+
+/* ---------- toolbar ---------- */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+  padding: 0.5rem 0.7rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+
+.navgroup { display: flex; gap: 0.15rem; flex: 0 0 auto; }
+
+.iconbtn {
+  width: 2rem;
+  height: 2rem;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.iconbtn:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.iconbtn:active:not(:disabled) { background: var(--surface-3); }
+.iconbtn:disabled { opacity: 0.3; cursor: default; }
+.iconbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ---------- omnibox ---------- */
+.omni { flex: 1 1 auto; display: flex; min-width: 0; position: relative; }
+.omni__scheme {
+  position: absolute;
+  left: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+.omni__input {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0.5rem 0.95rem 0.5rem 2rem;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--text);
+  text-overflow: ellipsis;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+.omni__input::placeholder { color: var(--text-dim); }
+.omni__input:hover { background: var(--surface-3); }
+.omni__input:focus {
+  outline: none;
+  background: var(--bg);
+  border-color: var(--accent);
+}
+
+/* ---------- view switch ---------- */
+.views {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-2);
+  border-radius: 8px;
+  flex: 0 0 auto;
+}
+.seg {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-dim);
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.seg:hover { color: var(--text); }
+.seg.is-active { background: var(--surface-3); color: var(--text); }
+.seg:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ---------- progress ---------- */
+.progress { height: 2px; background: transparent; flex: 0 0 auto; overflow: hidden; }
+.progress__bar {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.2s ease, opacity 0.3s ease;
+}
+.progress.is-loading .progress__bar { animation: creep 8s ease-out forwards; }
+@keyframes creep {
+  0%   { width: 0; }
+  40%  { width: 62%; }
+  75%  { width: 84%; }
+  100% { width: 93%; }
+}
+.progress.is-done .progress__bar { width: 100%; opacity: 0; }
+
+/* ---------- viewport ---------- */
+.viewport { flex: 1 1 auto; position: relative; min-height: 0; background: var(--bg); }
+
+.frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  background: #fff;
+}
+.frame[hidden] { display: none; }
+
+.source {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 1.1rem;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  line-height: 1.65;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.source[hidden] { display: none; }
+
+/* ---------- start screen ---------- */
+.start {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  padding: 2rem;
+  text-align: center;
+  background: var(--bg);
+}
+.start[hidden] { display: none; }
+.start__mark {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0;
+}
+.start__title { font-size: 1.5rem; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+.start__sub { font-size: 0.85rem; color: var(--text-dim); margin: 0; max-width: 40ch; line-height: 1.8; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; max-width: 34rem; }
+.chip {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 0.78rem;
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background-color 0.12s ease;
+}
+.chip:hover { background: var(--surface-2); border-color: var(--accent-dim); color: var(--text); }
+.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- escape notice ---------- */
+.escape {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 2rem;
+  text-align: center;
+  background: var(--bg);
+}
+.escape[hidden] { display: none; }
+.escape__code {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--err);
+  margin: 0;
+}
+.escape__title { font-size: 1.05rem; font-weight: 700; margin: 0; }
+.escape__body { font-size: 0.82rem; color: var(--text-dim); margin: 0; max-width: 42ch; line-height: 1.9; }
+.escape__btn {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 0.82rem;
+  padding: 0.5rem 1.2rem;
+  cursor: pointer;
+}
+.escape__btn:hover { background: var(--surface-3); border-color: var(--accent-dim); }
+.escape__btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- status bar ---------- */
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.35rem 0.85rem;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  flex: 0 0 auto;
+}
+.statusbar__msg {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.statusbar__msg[data-tone="loading"] { color: var(--accent); }
+.statusbar__msg[data-tone="success"] { color: var(--ok); }
+.statusbar__msg[data-tone="error"]   { color: var(--err); }
+.statusbar__note { flex: 0 0 auto; opacity: 0.6; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
+
+@media (max-width: 640px) {
+  .toolbar { flex-wrap: wrap; }
+  .omni { order: 3; flex-basis: 100%; }
+  .statusbar__note { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, .progress.is-loading .progress__bar { transition: none !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+<noscript>
+  <p style="padding:1rem;text-align:center;">このツールを使うには JavaScript を有効にしてください。</p>
+</noscript>
+
+<div class="app">
+  <div class="toolbar">
+    <div class="navgroup">
+      <button type="button" id="btnBack" class="iconbtn" title="戻る" aria-label="戻る" disabled>&#8592;</button>
+      <button type="button" id="btnForward" class="iconbtn" title="進む" aria-label="進む" disabled>&#8594;</button>
+      <button type="button" id="btnReload" class="iconbtn" title="再読み込み" aria-label="再読み込み" disabled>&#8635;</button>
+      <button type="button" id="btnHome" class="iconbtn" title="ホーム" aria-label="ホーム">&#8962;</button>
+    </div>
+
+    <form id="omniForm" class="omni" autocomplete="off">
+      <label for="omni" class="sr-only">URL または検索キーワード</label>
+      <span class="omni__scheme" id="omniScheme" aria-hidden="true">&#9906;</span>
+      <input type="text" id="omni" class="omni__input" placeholder="URL を入力、またはキーワードで検索" inputmode="url" spellcheck="false">
+    </form>
+
+    <div class="views" role="tablist" aria-label="表示モード">
+      <button type="button" id="tabPage" class="seg is-active" role="tab" aria-selected="true">表示</button>
+      <button type="button" id="tabSource" class="seg" role="tab" aria-selected="false">ソース</button>
+    </div>
+  </div>
+
+  <div id="progress" class="progress"><div class="progress__bar"></div></div>
+
+  <main class="viewport">
+    <section id="startScreen" class="start">
+      <p class="start__mark">Burning&#8202;Wish</p>
+      <h1 class="start__title">サイト内ブラウザ</h1>
+      <p class="start__sub">URL を入力すると、そのサイトをこのページの中でそのまま閲覧できます。リンクもフォームもここで完結します。</p>
+      <div class="chips" id="chips">
+        <button type="button" class="chip" data-url="https://ja.wikipedia.org/">Wikipedia</button>
+        <button type="button" class="chip" data-url="https://duckduckgo.com/html/?q=BurningWish">DuckDuckGo</button>
+        <button type="button" class="chip" data-url="https://news.yahoo.co.jp/">Yahoo!ニュース</button>
+        <button type="button" class="chip" data-url="https://github.com/">GitHub</button>
+        <button type="button" class="chip" data-url="https://example.com/">example.com</button>
+      </div>
+    </section>
+
+    <iframe
+      id="frame"
+      class="frame"
+      title="閲覧中のサイト"
+      sandbox="allow-scripts allow-forms allow-popups allow-modals allow-same-origin allow-downloads"
+      hidden></iframe>
+
+    <pre id="sourceView" class="source" hidden><code id="sourceCode"></code></pre>
+
+    <section id="escapeCard" class="escape" hidden>
+      <p class="escape__code">Outside Proxy</p>
+      <h2 class="escape__title">ページがプロキシの外へ移動しました</h2>
+      <p class="escape__body">開いていたページが、JavaScript で外部サイトへ直接移動しました。移動先はこのツールを経由していないため表示できません。</p>
+      <button type="button" id="escapeBack" class="escape__btn">前のページに戻る</button>
+    </section>
+  </main>
+
+  <div class="statusbar">
+    <span id="status" class="statusbar__msg" role="status" aria-live="polite">URL を入力して Enter を押してください。</span>
+    <span class="statusbar__note">検索は DuckDuckGo / WebSocket 依存の機能は動作しません</span>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var frame       = document.getElementById('frame');
+  var omni        = document.getElementById('omni');
+  var omniForm    = document.getElementById('omniForm');
+  var btnBack     = document.getElementById('btnBack');
+  var btnForward  = document.getElementById('btnForward');
+  var btnReload   = document.getElementById('btnReload');
+  var btnHome     = document.getElementById('btnHome');
+  var tabPage     = document.getElementById('tabPage');
+  var tabSource   = document.getElementById('tabSource');
+  var startScreen = document.getElementById('startScreen');
+  var sourceView  = document.getElementById('sourceView');
+  var sourceCode  = document.getElementById('sourceCode');
+  var progress    = document.getElementById('progress');
+  var status      = document.getElementById('status');
+  var chips       = document.getElementById('chips');
+  var escapeCard  = document.getElementById('escapeCard');
+  var escapeBack  = document.getElementById('escapeBack');
+
+  var SEARCH_URL = 'https://duckduckgo.com/html/?q=';
+  var MAX_SOURCE = 300000;
+  var PROXY_PATH = '/proxy';
+
+  // 親側で持つ履歴スタック(iframe 自身の履歴とは独立に管理する)
+  var stack = [];
+  var index = -1;
+  var currentUrl = null;
+  var suppressPush = false;
+  var view = 'page';
+
+  /* ------------------------------------------------------------- helpers */
+
+  function proxyUrl(url) {
+    return PROXY_PATH + '?url=' + encodeURIComponent(url);
+  }
+
+  function setStatus(message, tone) {
+    status.textContent = message;
+    status.dataset.tone = tone || 'neutral';
+  }
+
+  // URL らしければ URL として、そうでなければ検索クエリとして解釈する
+  function interpret(raw) {
+    var value = raw.trim();
+    if (!value) return null;
+
+    if (/^https?:\/\//i.test(value)) {
+      try { return new URL(value).href; } catch (e) { /* 検索へ回す */ }
+    }
+    var looksLikeHost = !/\s/.test(value) && /^[^\s/?#]+\.[a-z]{2,}(?:[:/?#]|$)/i.test(value);
+    if (looksLikeHost) {
+      try { return new URL('https://' + value).href; } catch (e) { /* 検索へ回す */ }
+    }
+    return SEARCH_URL + encodeURIComponent(value);
+  }
+
+  // iframe が今どの実 URL を見ているかを読む(同一オリジンなので参照できる)。
+  // 読めない = クロスオリジン、つまりページがプロキシの外へ出てしまった状態。
+  // location.replace / href は仕様上パッチできないため、この検知が最後の砦になる。
+  function readFrameState() {
+    var href;
+    try {
+      href = frame.contentWindow.location.href;
+    } catch (e) {
+      return { escaped: true, url: null };
+    }
+    try {
+      var parsed = new URL(href);
+      if (parsed.pathname === PROXY_PATH) {
+        return { escaped: false, url: parsed.searchParams.get('url') };
+      }
+    } catch (e) { /* about:blank など */ }
+    return { escaped: false, url: null };
+  }
+
+  function startProgress() {
+    progress.classList.remove('is-done');
+    progress.classList.add('is-loading');
+  }
+
+  function stopProgress() {
+    progress.classList.remove('is-loading');
+    progress.classList.add('is-done');
+  }
+
+  /* ------------------------------------------------------------- history */
+
+  function pushHistory(url) {
+    if (index >= 0 && stack[index] === url) return;
+    stack = stack.slice(0, index + 1);
+    stack.push(url);
+    index = stack.length - 1;
+    updateNavButtons();
+  }
+
+  function updateNavButtons() {
+    btnBack.disabled = index <= 0;
+    btnForward.disabled = index < 0 || index >= stack.length - 1;
+    btnReload.disabled = !currentUrl;
+  }
+
+  function go(delta) {
+    var next = index + delta;
+    if (next < 0 || next >= stack.length) return;
+    index = next;
+    suppressPush = true;
+    load(stack[index], { push: false });
+    updateNavButtons();
+  }
+
+  /* -------------------------------------------------------------- navigate */
+
+  function load(url, options) {
+    options = options || {};
+    currentUrl = url;
+
+    if (document.activeElement !== omni) omni.value = url;
+    if (options.push !== false) pushHistory(url);
+
+    startScreen.hidden = true;
+    escapeCard.hidden = true;
+    frame.hidden = (view !== 'page');
+    startProgress();
+    setStatus('読み込み中… ' + url, 'loading');
+
+    var target = proxyUrl(url);
+    // location.replace を使い、iframe 側の履歴を無駄に増やさない
+    try {
+      frame.contentWindow.location.replace(target);
+    } catch (e) {
+      frame.src = target;
+    }
+    updateNavButtons();
+  }
+
+  frame.addEventListener('load', function () {
+    stopProgress();
+    var state = readFrameState();
+
+    if (state.escaped) {
+      // 外部サイトへ直接飛ばされた。中身は読めないので案内を出して復帰させる。
+      escapeCard.hidden = false;
+      frame.hidden = true;
+      setStatus('プロキシの外へ移動したため表示できません。', 'error');
+      suppressPush = false;
+      updateNavButtons();
+      return;
+    }
+
+    var real = state.url;
+    if (real) {
+      currentUrl = real;
+      if (document.activeElement !== omni) omni.value = real;
+      if (!suppressPush) pushHistory(real);
+    }
+    suppressPush = false;
+    updateNavButtons();
+
+    var title = '';
+    try { title = frame.contentWindow.document.title || ''; } catch (e) { /* 読めなくても支障なし */ }
+    setStatus(title ? title + ' — ' + (currentUrl || '') : (currentUrl || '表示しました'), 'success');
+
+    if (view === 'source') loadSource();
+  });
+
+  // 注入シムからの通知(pushState など、load が発火しない遷移を拾う)
+  window.addEventListener('message', function (event) {
+    var data = event.data;
+    if (!data || data.__bw !== 'nav' || !data.url) return;
+
+    currentUrl = data.url;
+    if (document.activeElement !== omni) omni.value = data.url;
+    if (!suppressPush) pushHistory(data.url);
+    updateNavButtons();
+  });
+
+  /* ----------------------------------------------------------- source view */
+
+  function showView(which) {
+    view = which;
+    var isPage = which === 'page';
+    tabPage.classList.toggle('is-active', isPage);
+    tabSource.classList.toggle('is-active', !isPage);
+    tabPage.setAttribute('aria-selected', String(isPage));
+    tabSource.setAttribute('aria-selected', String(!isPage));
+
+    frame.hidden = !isPage || !currentUrl;
+    sourceView.hidden = isPage;
+    if (!isPage) escapeCard.hidden = true;
+    startScreen.hidden = !!currentUrl;
+
+    if (!isPage) loadSource();
+  }
+
+  async function loadSource() {
+    if (!currentUrl) {
+      sourceCode.textContent = 'まだ何も読み込まれていません。';
+      return;
+    }
+    sourceCode.textContent = '読み込み中…';
+    try {
+      var res = await fetch(proxyUrl(currentUrl) + '&raw=1');
+      var text = await res.text();
+      sourceCode.textContent = text.length > MAX_SOURCE
+        ? text.slice(0, MAX_SOURCE) + '\n\n…(長いため以降は省略されました)'
+        : text;
+    } catch (err) {
+      sourceCode.textContent = 'ソースを取得できませんでした: ' + err.message;
+    }
+  }
+
+  /* ---------------------------------------------------------------- events */
+
+  omniForm.addEventListener('submit', function (event) {
+    event.preventDefault();
+    var url = interpret(omni.value);
+    if (!url) {
+      setStatus('URL またはキーワードを入力してください。', 'error');
+      omni.focus();
+      return;
+    }
+    omni.blur();
+    if (view !== 'page') showView('page');
+    load(url);
+  });
+
+  omni.addEventListener('focus', function () { omni.select(); });
+
+  btnBack.addEventListener('click', function () { go(-1); });
+  btnForward.addEventListener('click', function () { go(1); });
+  btnReload.addEventListener('click', function () {
+    if (currentUrl) { suppressPush = true; load(currentUrl, { push: false }); }
+  });
+  btnHome.addEventListener('click', function () {
+    currentUrl = null;
+    stack = [];
+    index = -1;
+    omni.value = '';
+    frame.hidden = true;
+    sourceView.hidden = true;
+    escapeCard.hidden = true;
+    sourceCode.textContent = '';
+    startScreen.hidden = false;
+    showView('page');
+    updateNavButtons();
+    setStatus('URL を入力して Enter を押してください。', '');
+  });
+
+  escapeBack.addEventListener('click', function () {
+    escapeCard.hidden = true;
+    if (index > 0) go(-1);
+    else if (currentUrl) { suppressPush = true; load(currentUrl, { push: false }); }
+    else btnHome.click();
+  });
+
+  tabPage.addEventListener('click', function () { showView('page'); });
+  tabSource.addEventListener('click', function () { showView('source'); });
+
+  chips.addEventListener('click', function (event) {
+    var chip = event.target.closest('.chip');
+    if (!chip) return;
+    load(chip.dataset.url);
+  });
+
+  updateNavButtons();
+})();
+</script>
+</body>
+</html>
