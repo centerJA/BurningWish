@@ -1022,6 +1022,43 @@ addEventListener("submit",function(e){
   ensure(f,"__proxy_method__",m);
 },true);
 
+/* --- YouTube 向けの調整 ---
+   YouTube の検索ボックスは Enter を JS で握りつぶし、submit イベントを
+   一切発火させない(フォームは存在するのに使われない)。SPA 側のルーティングは
+   プロキシ下では動かないため、検索結果ページへ通常のページ遷移をさせる。
+   /results?search_query=... は普通のページ遷移なら正しく表示できる。 */
+if(BASE_URL&&/(^|\.)youtube\.com$/.test(BASE_URL.hostname)){
+  var ytGo=function(q){
+    q=String(q||"").trim();
+    if(!q)return false;
+    location.assign(px("https://www.youtube.com/results?search_query="+encodeURIComponent(q)));
+    return true;
+  };
+  var ytInput=function(el){
+    if(!el||!el.closest)return null;
+    if(el.tagName==="INPUT"&&el.name==="search_query")return el;
+    var f=el.closest("form");
+    return f?f.querySelector('input[name="search_query"]'):null;
+  };
+  addEventListener("keydown",function(e){
+    /* key / code / keyCode のどれかで Enter を判定する(環境差に備える)。
+       keyCode 229 と isComposing は IME 変換中なので除外する。 */
+    var isEnter=e.key==="Enter"||e.code==="Enter"||e.keyCode===13||e.which===13;
+    if(!isEnter||e.isComposing||e.keyCode===229)return;
+    var t=e.target;
+    if(!t||t.tagName!=="INPUT"||t.name!=="search_query")return;
+    if(ytGo(t.value)){e.preventDefault();e.stopImmediatePropagation();}
+  },true);
+  addEventListener("click",function(e){
+    var t=e.target;
+    if(!t||!t.closest)return;
+    if(t.tagName==="INPUT")return;
+    var inp=ytInput(t);
+    if(!inp)return;
+    if(ytGo(inp.value)){e.preventDefault();e.stopImmediatePropagation();}
+  },true);
+}
+
 tell(BASE);
 addEventListener("DOMContentLoaded",function(){tell(unprox(location.href));});
 addEventListener("load",function(){tell(unprox(location.href));});
