@@ -82,6 +82,12 @@ YouTube の動画配信 URL (`googlevideo.com`) は**取得時のクライアン
 - 対象: `youtube.com/watch`、`youtu.be/`、`shorts/`、`live/`、`embed/`、
   `m.` / `music.` サブドメイン、`playlist?list=`
 - `t=90` や `t=1h2m3s` の開始位置指定も引き継ぐ
+- 埋め込み URL に `origin` / `widget_referrer` / `enablejsapi` を付ける。
+  YouTube は埋め込み元オリジンを識別できないと再生を拒否する(エラー153)ため、
+  Referer に頼らず明示する。あわせて index.html に
+  `<meta name="referrer" content="strict-origin-when-cross-origin">` を置いている
+- 再生できない動画(提供者が埋め込みを禁止しているなど)は IFrame API の
+  `onError` を受けて案内を表示し、「YouTube で開く」で外部タブに逃がす
 - 動画以外のページ(トップ、検索、チャンネル)は従来どおりプロキシ経由で表示する
 - **検索ボックスの Enter を横取りして `/results?search_query=...` へ通常遷移させる。**
   YouTube は Enter を JS で握りつぶし submit イベントを一切発火させないうえ、

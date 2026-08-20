@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="dark">
+<!-- YouTube 埋め込みプレーヤーは埋め込み元オリジンを識別できないと
+     エラー153 で再生を拒否する。既定値を明示して、
+     クロスオリジンには必ずオリジンが送られるようにしておく
+     (同一オリジンには完全な URL が送られるので文脈復元にも影響しない)。 -->
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <title>BurningWish — サイト内ブラウザ</title>
 <meta name="description" content="URLを入力すると、他のウェブサイトをこのページの中でそのまま閲覧できるプロキシブラウザです。">
 <link rel="icon" href="data:,">
@@ -329,10 +334,10 @@ body {
       <p class="start__sub">URL を入力すると、そのサイトをこのページの中でそのまま閲覧できます。リンクもフォームもここで完結します。</p>
       <div class="chips" id="chips">
         <button type="button" class="chip" data-url="https://ja.wikipedia.org/">Wikipedia</button>
-        <button type="button" class="chip" data-url="https://search.brave.com/search?q=BurningWish">Brave Search</button>
-        <button type="button" class="chip" data-url="https://news.yahoo.co.jp/">Yahoo!ニュース</button>
+        <button type="button" class="chip" data-url="https://search.brave.com/">Brave Search</button>
+        <button type="button" class="chip" data-url="https://www.yahoo.co.jp/">Yahoo! JAPAN</button>
         <button type="button" class="chip" data-url="https://github.com/">GitHub</button>
-        <button type="button" class="chip" data-url="https://www.youtube.com/watch?v=jNQXAC9IVRw">YouTube</button>
+        <button type="button" class="chip" data-url="https://www.youtube.com/">YouTube</button>
         <button type="button" class="chip" data-url="https://example.com/">example.com</button>
       </div>
     </section>
@@ -346,6 +351,13 @@ body {
       hidden></iframe>
 
     <pre id="sourceView" class="source" hidden><code id="sourceCode"></code></pre>
+
+    <section id="playerError" class="escape" hidden>
+      <p class="escape__code">Playback Error</p>
+      <h2 class="escape__title">この動画は埋め込み再生できません</h2>
+      <p class="escape__body" id="playerErrorBody">動画の提供者が外部サイトでの再生を許可していない可能性があります。</p>
+      <button type="button" id="playerErrorOpen" class="escape__btn">YouTube で開く</button>
+    </section>
 
     <section id="escapeCard" class="escape" hidden>
       <p class="escape__code">Outside Proxy</p>
@@ -382,6 +394,9 @@ body {
   var chips       = document.getElementById('chips');
   var escapeCard  = document.getElementById('escapeCard');
   var escapeBack  = document.getElementById('escapeBack');
+  var playerError = document.getElementById('playerError');
+  var playerErrorBody = document.getElementById('playerErrorBody');
+  var playerErrorOpen = document.getElementById('playerErrorOpen');
 
   // Brave Search を使う。
   // DuckDuckGo は Cookie を一切発行せず IP だけでボット判定するため、
@@ -456,7 +471,12 @@ body {
     if (id && !/^[\w-]{6,20}$/.test(id)) id = null;
     if (!id && !list) return null;
 
-    var params = ['rel=0'];
+    // enablejsapi + origin: 埋め込み元オリジンを YouTube に明示する。
+    // これが伝わらないと再生が拒否される(エラー153)。
+    // enablejsapi は再生エラーを親で受け取るためにも必要。
+    var params = ['rel=0', 'enablejsapi=1',
+                  'origin=' + encodeURIComponent(location.origin),
+                  'widget_referrer=' + encodeURIComponent(location.origin)];
     if (list) params.push('list=' + encodeURIComponent(list));
 
     var t = u.searchParams.get('t') || u.searchParams.get('start');
@@ -566,6 +586,7 @@ body {
 
     startScreen.hidden = true;
     escapeCard.hidden = true;
+    playerError.hidden = true;
     frame.hidden = (view !== 'page');
     startProgress();
 
@@ -597,6 +618,11 @@ body {
       setStatus('YouTube プレーヤー(直接接続) — ' + (currentUrl || ''), 'success');
       suppressPush = false;
       updateNavButtons();
+      // 再生エラーを受け取れるよう IFrame API に購読を申し込む
+      try {
+        frame.contentWindow.postMessage(
+          JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), '*');
+      } catch (e) { /* 受け取れなくても再生自体には影響しない */ }
       return;
     }
 
@@ -653,6 +679,15 @@ body {
 
   // 注入シムからの通知(pushState など、load が発火しない遷移を拾う)
   window.addEventListener('message', function (event) {
+    // YouTube 埋め込みプレーヤーからの通知(文字列 JSON で届く)
+    if (directMode && typeof event.data === 'string' &&
+        String(event.origin).indexOf('youtube') > -1) {
+      var yt;
+      try { yt = JSON.parse(event.data); } catch (e) { return; }
+      if (yt && yt.event === 'onError') showPlayerError(yt.info);
+      return;
+    }
+
     var data = event.data;
     if (!data || data.__bw !== 'nav' || !data.url) return;
 
@@ -682,7 +717,7 @@ body {
 
     frame.hidden = !isPage || !currentUrl;
     sourceView.hidden = isPage;
-    if (!isPage) escapeCard.hidden = true;
+    if (!isPage) { escapeCard.hidden = true; playerError.hidden = true; }
     startScreen.hidden = !!currentUrl;
 
     if (!isPage) loadSource();
@@ -736,11 +771,32 @@ body {
     frame.hidden = true;
     sourceView.hidden = true;
     escapeCard.hidden = true;
+    playerError.hidden = true;
     sourceCode.textContent = '';
     startScreen.hidden = false;
     showView('page');
     updateNavButtons();
     setStatus('URL を入力して Enter を押してください。', '');
+  });
+
+  /**
+   * 埋め込みプレーヤーの再生エラーを案内する。
+   * 100/101/150/153 はいずれも「この動画は外部サイトで再生できない」系。
+   */
+  function showPlayerError(code) {
+    var reason;
+    if (code === 100) reason = '動画が見つからないか、非公開に設定されています。';
+    else if (code === 2) reason = '動画IDが正しくありません。';
+    else if (code === 5) reason = 'この動画はお使いのブラウザでは再生できません。';
+    else reason = '動画の提供者が外部サイトでの再生を許可していない可能性があります。';
+
+    playerErrorBody.textContent = reason + '（エラーコード: ' + code + '）';
+    playerError.hidden = false;
+    setStatus('この動画は埋め込み再生できませんでした（コード ' + code + '）', 'error');
+  }
+
+  playerErrorOpen.addEventListener('click', function () {
+    if (currentUrl) window.open(currentUrl, '_blank', 'noopener');
   });
 
   escapeBack.addEventListener('click', function () {
