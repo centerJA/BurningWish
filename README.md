@@ -41,11 +41,20 @@ npx wrangler dev
 - `history.pushState` / `replaceState`(親へ現在 URL を通知してアドレスバーを同期)
 - `window.open`
 - 動的に生成された `a` / `form`(クリック・送信をキャプチャ段階で拾う)
+- **パスでルーティングする SPA 対策**: X のような SPA は `location.pathname` を見て
+  表示を決めるが、プロキシでは常に `/proxy` なので誤ったページが出る
+  (X は `/proxy` を「@proxy というユーザー」と解釈して別人のプロフィールを表示していた)。
+  自オリジンなのでシムの先頭で `history.replaceState` を使い、
+  アドレスだけ本来のパスに合わせる。
+  これに伴い、ページが `location.href` から組み立てた URL は自オリジンを指すようになるため、
+  `deorigin()` で本来のサイト基準へ読み替えてから扱う(自分自身をプロキシしてしまうのを防ぐ)
 - **フレーム脱出対策**: インライン script 内の `parent.location` / `top.location` を
   サーバー側で `__bwLoc` へ書き換え、`parent.location.replace(...)` 型の遷移を
   プロキシ経由へ矯正する。`__bwLoc` はアクセサなので `parent.location = url` の
   直接代入型も拾える
-- Service Worker は経路を横取りして破綻させるため無効化
+- Service Worker は経路を横取りして破綻させるため無効化する。
+  ただし `undefined` にすると `navigator.serviceWorker.register(...)` を無条件で呼ぶ
+  サイト(TikTok など)が TypeError で丸ごと止まるので、呼んでも安全なスタブを置く
 
 ### そのほかの挙動
 
@@ -54,6 +63,8 @@ npx wrangler dev
 - **自オリジンへ逃げた遷移の救済**: ページが `/foo` のような自オリジンの絶対パスへ
   遷移した場合、本来の行き先へ送り直す。文脈は Referer から取り、取れないときは
   HTML 応答時に残しておく `bwctx` Cookie を使う(Referer が付かない遷移があるため)。
+  ルート `/` はこのアプリ自身の置き場所でもあるので、`Sec-Fetch-Dest` が
+  `iframe` のときだけ救済する(アプリ本体の表示は妨げない)。
   あわせて応答に `Referrer-Policy: same-origin` を設定し、
   自オリジンには完全な Referer を送りつつ外部へは一切送らないようにしている
 - **Cookie**: 上流の `Set-Cookie` を登録可能ドメイン単位でまとめ、自オリジンの
@@ -104,6 +115,17 @@ YouTube の動画配信 URL (`googlevideo.com`) は**取得時のクライアン
 - プロキシ経由のページ内で動画リンクを押した場合も、シムが行き先を親へ通知して
   埋め込みプレーヤーへ切り替える(YouTube の SPA が動的に生成したリンクにも対応)
 - この間だけ通信がプロキシを経由しない。ステータスバーに「直接接続」と表示する
+
+## 主要 SNS の対応状況
+
+| サイト | 状態 |
+|---|---|
+| X (旧Twitter) | トップ・ログイン画面とも表示できる |
+| Instagram | ログイン画面まで表示できる |
+| TikTok | 動画フィードが表示・再生できる |
+
+いずれもログインまでは検証していない。各サービスのボット対策により
+ログイン操作が拒否される可能性がある。
 
 ## 既知の限界
 

@@ -116,6 +116,16 @@ function readContextCookie(request) {
  * (ブラウザや遷移の種類によっては Referer が付かないことがある)
  */
 function rescueFromReferer(request, url) {
+  // ルート "/" はこのアプリ自身の置き場所でもある。
+  // プロキシ中のページが "/" へ逃げると、iframe の中にこのアプリが
+  // 読み込まれてしまうため救済したいが、アプリ本体の表示は妨げてはいけない。
+  // トップレベルの表示は Sec-Fetch-Dest: document、
+  // iframe の遷移は iframe なので、これで見分ける。
+  if (url.pathname === "/") {
+    const dest = (request.headers.get("Sec-Fetch-Dest") || "document").toLowerCase();
+    if (dest !== "iframe" && dest !== "frame") return null;
+  }
+
   let context = null;
 
   const ref = request.headers.get("Referer");
@@ -940,15 +950,36 @@ var BASE=${B},O=location.origin,PX=O+"${PROXY_PREFIX}";
 var REAL_PARENT=window.parent;
 function unprox(u){try{var x=new URL(u,O);if(x.origin===O&&x.pathname==="${PROXY_PATH}"){var t=x.searchParams.get("url");if(t)return t;}}catch(e){}return null;}
 function toAbs(u){try{return new URL(u,BASE).href;}catch(e){return null;}}
+/* 自オリジンを指す URL を、本来のサイト基準へ読み替える。
+   アドレスを本来のパスへ書き換えている(下の replaceState)ため、
+   ページが location.href や document.baseURI から組み立てた URL は
+   自オリジンを指してしまう。そのまま扱うと自分自身をプロキシしてしまう。 */
+function deorigin(a){
+  try{
+    var x=new URL(a);
+    if(x.origin!==O)return a;
+    return unprox(a)||new URL(x.pathname+x.search+x.hash,BASE).href;
+  }catch(e){return a;}
+}
 function px(u){
   if(u==null)return u;
   var s=String(u);if(!s)return u;
   if(/^(data:|blob:|javascript:|mailto:|tel:|about:|sms:|#)/i.test(s))return u;
   if(unprox(s))return u;
   var a=toAbs(s);if(!a||!/^https?:/i.test(a))return u;
+  a=deorigin(a);
+  if(!/^https?:/i.test(a))return u;
   return PX+encodeURIComponent(a);
 }
-function tell(u){try{REAL_PARENT.postMessage({__bw:"nav",url:u||BASE,title:document.title},"*");}catch(e){}}
+/* 親へ現在地を伝える。
+   アドレスを本来のパスへ書き換えている(下の replaceState)関係で、
+   サイトが location.href を pushState に渡すと自オリジンの URL が回ってくる。
+   その場合はパスを本来のサイト基準に読み替えてから通知する。 */
+function tell(u){
+  var url=u||BASE;
+  try{url=deorigin(new URL(url,O).href);}catch(e){url=BASE;}
+  try{REAL_PARENT.postMessage({__bw:"nav",url:url,title:document.title},"*");}catch(e){}
+}
 function navTo(u){var p=px(u);try{location.replace(p);}catch(e){location.href=p;}}
 
 /* --- フレーム脱出(frame busting)対策 ---
@@ -962,6 +993,19 @@ function navTo(u){var p=px(u);try{location.replace(p);}catch(e){location.href=p;
    サーバー側で __bwLoc へ書き換える方式を採る。
    __bwLoc は replace / assign / href 代入をプロキシ経由に矯正する。 */
 var BASE_URL=null;try{BASE_URL=new URL(BASE);}catch(e){}
+
+/* --- パスでルーティングする SPA 対策 ---
+   X(旧Twitter)のような SPA は location.pathname を見て表示を決める。
+   プロキシでは常に /proxy なので、X はこれを「@proxy というユーザー」と解釈して
+   別人のプロフィールを表示してしまう。
+   自オリジンなので replaceState でアドレスだけ本来のパスに合わせられる。
+   ページ側のスクリプトより先に実行する必要があるため、シムの先頭で行う。
+   (相対 URL の解決先も本来のパス基準になるので、そちらも正確になる) */
+try{
+  if(BASE_URL&&location.pathname==="${PROXY_PATH}"){
+    history.replaceState(history.state,"",BASE_URL.pathname+BASE_URL.search+BASE_URL.hash);
+  }
+}catch(e){}
 var __bwLocObj=new Proxy({},{
   get:function(t,k){
     if(k==="replace"||k==="assign")return function(u){navTo(u);};
@@ -1013,7 +1057,7 @@ window.open=function(u,n,f){try{u=px(u);}catch(e){}return _wopen.call(window,u,n
     /* u が既に /proxy?url=... の形のこともある(SPA が location から組み立てた場合)。
        その場合 BASE 基準で解決すると news.example.com/proxy?url=... のような
        でたらめな URL になるため、先に unprox を試す。 */
-    if(u!=null){try{real=unprox(u)||toAbs(u);u=px(u);}catch(e){}}
+    if(u!=null){try{real=unprox(u)||deorigin(toAbs(u));u=px(u);}catch(e){}}
     var r=_orig.call(history,s,t,u);
     if(real)tell(real);
     return r;
@@ -1021,10 +1065,26 @@ window.open=function(u,n,f){try{u=px(u);}catch(e){}return _wopen.call(window,u,n
 });
 addEventListener("popstate",function(){tell(unprox(location.href));});
 
-/* Service Worker は経路を横取りしてプロキシを破綻させるので無効化する */
+/* Service Worker は経路を横取りしてプロキシを破綻させるので無効化する。
+   ただし undefined にすると navigator.serviceWorker.register(...) を
+   無条件で呼ぶサイト(TikTok など)が TypeError で丸ごと止まるため、
+   呼んでも安全なスタブを置く。 */
 try{
   if(navigator.serviceWorker){
-    Object.defineProperty(navigator,"serviceWorker",{configurable:true,get:function(){return undefined;}});
+    var swStub={
+      register:function(){return Promise.reject(new Error("ServiceWorker is disabled by the proxy"));},
+      getRegistration:function(){return Promise.resolve(undefined);},
+      getRegistrations:function(){return Promise.resolve([]);},
+      ready:new Promise(function(){}),
+      controller:null,
+      oncontrollerchange:null,
+      onmessage:null,
+      startMessages:function(){},
+      addEventListener:function(){},
+      removeEventListener:function(){},
+      dispatchEvent:function(){return false;}
+    };
+    Object.defineProperty(navigator,"serviceWorker",{configurable:true,get:function(){return swStub;}});
   }
 }catch(e){}
 

@@ -16,7 +16,10 @@
     // /proxy だけ Worker を先に通す。アセットに存在しないパスは
     // 自動的に Worker へ回るので、プロキシ中のページが自オリジンへ
     // 逃げた場合の Referer 救済も従来どおり効く。
-    "run_worker_first": ["/proxy"]
+    // "/" も Worker を先に通す。プロキシ中のページが自オリジンのルートへ
+    // 逃げたとき、iframe の中にこのアプリ自身が読み込まれるのを防ぐため。
+    // (アプリ本体の表示は Sec-Fetch-Dest で見分けて素通しする)
+    "run_worker_first": ["/proxy", "/"]
   },
   "compatibility_flags": ["nodejs_compat"]
 }
