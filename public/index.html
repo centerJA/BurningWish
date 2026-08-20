@@ -187,15 +187,22 @@ body {
   position: absolute;
   inset: 0;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1.5rem;
-  padding: 2rem;
-  text-align: center;
+  overflow-y: auto;
   background: var(--bg);
 }
 .start[hidden] { display: none; }
+
+/* margin:auto なら、収まるときは中央寄せ・はみ出すときは切れずにスクロールする
+   (justify-content:center だと上端が切れて操作できなくなる) */
+.start__inner {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 2rem 1.25rem;
+  text-align: center;
+}
 .start__mark {
   font-family: var(--mono);
   font-size: 0.68rem;
@@ -221,6 +228,24 @@ body {
 }
 .chip:hover { background: var(--surface-2); border-color: var(--accent-dim); color: var(--text); }
 .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.start__notes {
+  max-width: 40rem;
+  margin-top: 0.5rem;
+  padding: 0.9rem 1.1rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  text-align: left;
+}
+.start__notes p {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.85;
+  color: var(--text-dim);
+}
+.start__notes p + p { margin-top: 0.5rem; }
+.start__notes strong { color: var(--text); font-weight: 500; }
 
 /* ---------- escape notice ---------- */
 .escape {
@@ -329,6 +354,7 @@ body {
 
   <main class="viewport">
     <section id="startScreen" class="start">
+     <div class="start__inner">
       <p class="start__mark">Burning&#8202;Wish</p>
       <h1 class="start__title">サイト内ブラウザ</h1>
       <p class="start__sub">URL を入力すると、そのサイトをこのページの中でそのまま閲覧できます。リンクもフォームもここで完結します。</p>
@@ -340,6 +366,12 @@ body {
         <button type="button" class="chip" data-url="https://www.youtube.com/">YouTube</button>
         <button type="button" class="chip" data-url="https://example.com/">example.com</button>
       </div>
+
+      <div class="start__notes">
+        <p><strong>推奨環境は Chrome です。</strong>Safari など他のブラウザでは、一部のサイトが正しく表示・再生できないことがあります。</p>
+        <p><strong>YouTube は動画のみ再生できます。</strong>公式の埋め込みプレーヤーを使うため、関連動画やコメント欄は表示されません。</p>
+      </div>
+     </div>
     </section>
 
     <iframe
@@ -348,6 +380,7 @@ body {
       title="閲覧中のサイト"
       sandbox="allow-scripts allow-forms allow-popups allow-modals allow-same-origin allow-downloads allow-presentation"
       allow="autoplay; fullscreen; encrypted-media; picture-in-picture; clipboard-write"
+      allowfullscreen
       hidden></iframe>
 
     <pre id="sourceView" class="source" hidden><code id="sourceCode"></code></pre>
@@ -415,6 +448,15 @@ body {
   var suppressPush = false;
   var view = 'page';
   var directMode = false;   // YouTube 埋め込みなど、プロキシを通さず直接読み込んでいる状態
+
+  // プロキシした内容を隔離するための sandbox。
+  // 一方 YouTube の埋め込みプレーヤーには sandbox を付けない。
+  // Safari は sandbox 下の別オリジン iframe のストレージアクセスを強く制限するため、
+  // プレーヤーが初期化に失敗してエラー153(埋め込み元を識別できない)になる。
+  // 埋め込みプレーヤーは YouTube 公式のものを直接読み込んでいるので隔離の必要もない。
+  var PROXY_SANDBOX =
+    'allow-scripts allow-forms allow-popups allow-modals allow-same-origin allow-downloads allow-presentation';
+  var FRAME_ALLOW = 'autoplay; fullscreen; encrypted-media; picture-in-picture; clipboard-write';
 
   /* ------------------------------------------------------------- helpers */
 
@@ -595,7 +637,8 @@ body {
     directMode = !!embed;
 
     // プロキシ経由と直接読み込みを行き来するときはフレームを作り直す
-    if (wasDirect !== directMode) recreateFrame();
+    // (sandbox の有無が変わるので、属性だけの差し替えでは効かない)
+    if (wasDirect !== directMode) recreateFrame(directMode);
 
     if (directMode) {
       // 埋め込みプレーヤーはプロキシを通さない(通すと再生できない)
@@ -663,13 +706,14 @@ body {
    * 既存フレームへの遷移指示が効かなかったり、前のページの load イベントが
    * 遅れて届いて誤判定を起こす。新しい要素にすれば確実に初期状態から始まる。
    */
-  function recreateFrame() {
+  function recreateFrame(direct) {
     var fresh = document.createElement('iframe');
     fresh.id = 'frame';
     fresh.className = frame.className;
     fresh.title = frame.title;
-    fresh.setAttribute('sandbox', frame.getAttribute('sandbox'));
-    fresh.setAttribute('allow', frame.getAttribute('allow'));
+    fresh.setAttribute('allow', FRAME_ALLOW);
+    fresh.setAttribute('allowfullscreen', '');   // 旧仕様しか見ない Safari 向け
+    if (!direct) fresh.setAttribute('sandbox', PROXY_SANDBOX);
     fresh.hidden = frame.hidden;
 
     frame.parentNode.replaceChild(fresh, frame);
@@ -768,6 +812,8 @@ body {
     stack = [];
     index = -1;
     omni.value = '';
+    // iframe を隠すだけでは中の動画が鳴り続けるので、要素ごと作り直して破棄する
+    recreateFrame(false);
     frame.hidden = true;
     sourceView.hidden = true;
     escapeCard.hidden = true;
