@@ -169,8 +169,9 @@ async function handleProxy(request, url) {
 
   // --- Cookie ジャー: 自オリジンに保存した上流 Cookie を復元 ---
   const jar = readJar(request, targetUrl.hostname);
+  const jsJar = readJsJar(request, targetUrl.hostname);
 
-  const headers = buildUpstreamHeaders(request, targetUrl, jar, contentType, method);
+  const headers = buildUpstreamHeaders(request, targetUrl, jar, contentType, method, jsJar);
 
   const init = { method, headers, redirect: "manual" };
   if (body !== null && body !== undefined && method !== "GET" && method !== "HEAD") {
@@ -268,7 +269,7 @@ async function handleProxy(request, url) {
   // デコード → 正規表現による書き換え → UTF-8 として返す。
   if (!isUtf8(encoding)) {
     const text = buffered ? decodeBuffer(buffered, encoding) : await decodeBody(upstream, encoding);
-    return new Response(rewriteHtmlFallback(text, targetUrl.href), {
+    return new Response(rewriteHtmlFallback(text, targetUrl.href, { jar, jsJarCookieName: jsJarName(targetUrl.hostname) }), {
       status: upstream.status,
       headers: outHeaders
     });
@@ -280,7 +281,7 @@ async function handleProxy(request, url) {
       ? buffered
       : upstream.body;
   const source = new Response(htmlBody, { status: upstream.status, headers: outHeaders });
-  return buildHtmlRewriter(targetUrl.href).transform(source);
+  return buildHtmlRewriter(targetUrl.href, jar, jsJarName(targetUrl.hostname)).transform(source);
 }
 
 /**
@@ -435,7 +436,7 @@ function isPrivateIPv4(ip) {
 
 /* ---------------------------------------------------------- 上流ヘッダ */
 
-function buildUpstreamHeaders(request, targetUrl, jar, contentTypeOverride, method) {
+function buildUpstreamHeaders(request, targetUrl, jar, contentTypeOverride, method, jsJar) {
   const h = new Headers();
 
   for (const [k, v] of request.headers) {
@@ -488,7 +489,7 @@ function buildUpstreamHeaders(request, targetUrl, jar, contentTypeOverride, meth
 
   if (contentTypeOverride) h.set("Content-Type", contentTypeOverride);
 
-  const cookie = upstreamCookieHeader(jar);
+  const cookie = upstreamCookieHeader(jar, jsJar);
   if (cookie) h.set("Cookie", cookie);
 
   return h;
@@ -555,6 +556,35 @@ function readJar(request, hostname) {
   return jar;
 }
 
+const JS_JAR_PREFIX = "bwjs_";
+
+/** ページの JS が document.cookie に書いた分を保持する Cookie の名前 */
+function jsJarName(hostname) {
+  return JS_JAR_PREFIX + jarName(hostname).slice(JAR_PREFIX.length);
+}
+
+/** ページ側が書いた Cookie を読む(サーバー側ジャーとは別枠で持つ) */
+function readJsJar(request, hostname) {
+  const jar = new Map();
+  const raw = request.headers.get("Cookie");
+  if (!raw) return jar;
+
+  const want = jsJarName(hostname);
+  for (const part of raw.split(";")) {
+    const i = part.indexOf("=");
+    if (i < 0) continue;
+    if (part.slice(0, i).trim() !== want) continue;
+    let decoded;
+    try {
+      decoded = decodeURIComponent(part.slice(i + 1).trim());
+    } catch {
+      continue;
+    }
+    for (const [n, v] of new URLSearchParams(decoded)) jar.set(n, v);
+  }
+  return jar;
+}
+
 function readSetCookies(headers) {
   if (typeof headers.getSetCookie === "function") return headers.getSetCookie();
   const single = headers.get("set-cookie");
@@ -587,10 +617,19 @@ function mergeSetCookies(jar, list) {
   return jar;
 }
 
-function upstreamCookieHeader(jar) {
-  if (!jar.size) return "";
+/**
+ * 上流へ送る Cookie ヘッダを作る。
+ * サーバー側で受け取った Cookie を優先し、ページの JS が書いた分は
+ * 同名が無いときだけ足す(上流が更新した値を古い値で上書きしないため)。
+ */
+function upstreamCookieHeader(jar, jsJar) {
+  const merged = new Map(jar);
+  if (jsJar) {
+    for (const [k, v] of jsJar) if (!merged.has(k)) merged.set(k, v);
+  }
+  if (!merged.size) return "";
   const out = [];
-  for (const [k, v] of jar) out.push(`${k}=${v}`);
+  for (const [k, v] of merged) out.push(`${k}=${v}`);
   return out.join("; ");
 }
 
@@ -692,7 +731,7 @@ function rewriteCss(css, base) {
 
 /* ------------------------------------------------------- HTMLRewriter */
 
-function buildHtmlRewriter(finalUrl) {
+function buildHtmlRewriter(finalUrl, jar, jsJarCookieName) {
   // <base href> が現れたらここを更新する。HTMLRewriter は文書順に処理するため、
   // <head> 内の <base> は body の要素より必ず先に処理される。
   const state = { base: finalUrl, injected: false };
@@ -715,7 +754,7 @@ function buildHtmlRewriter(finalUrl) {
     element(el) {
       if (state.injected) return;
       state.injected = true;
-      el.prepend(shimScript(state.base), { html: true });
+      el.prepend(shimScript(state.base, jar, jsJarCookieName), { html: true });
     }
   };
 
@@ -877,7 +916,7 @@ class StyleRewriter {
  * HTMLRewriter は UTF-8 前提のため、Shift_JIS / EUC-JP はこちらで処理する。
  * 正規表現ベースなので網羅性は劣るが、この種のサイトは構造が単純なことが多い。
  */
-function rewriteHtmlFallback(html, base) {
+function rewriteHtmlFallback(html, base, opts) {
   let out = html;
 
   // 文書内の <base> を基準に取り込んでから取り除く
@@ -926,7 +965,7 @@ function rewriteHtmlFallback(html, base) {
     );
   });
 
-  const shim = shimScript(base);
+  const shim = shimScript(base, opts && opts.jar, opts && opts.jsJarCookieName);
   if (/<head[^>]*>/i.test(out)) {
     out = out.replace(/<head([^>]*)>/i, `<head$1><meta charset="utf-8">${shim}`);
   } else {
@@ -942,8 +981,12 @@ function rewriteHtmlFallback(html, base) {
  * 静的な属性書き換えだけでは、JS が実行時に組み立てる遷移を捕まえられない。
  * ここで fetch / XHR / history / window.open / 動的リンクを矯正する。
  */
-function shimScript(base) {
+function shimScript(base, jar, jsJarCookieName) {
   const B = JSON.stringify(base);
+  // 現在のサイトの Cookie をページへ見せるために埋め込む。
+  // "<" はそのまま出すと </script> を作り得るのでエスケープしておく。
+  const COOKIES = JSON.stringify(Object.fromEntries(jar || [])).replace(/</g, "\\u003c");
+  const JSJAR = JSON.stringify(jsJarCookieName || "");
   return `<script data-bw="shim">(function(){
 if(window.__BW_SHIM__)return;window.__BW_SHIM__=1;
 var BASE=${B},O=location.origin,PX=O+"${PROXY_PREFIX}";
@@ -993,6 +1036,63 @@ function navTo(u){var p=px(u);try{location.replace(p);}catch(e){location.href=p;
    サーバー側で __bwLoc へ書き換える方式を採る。
    __bwLoc は replace / assign / href 代入をプロキシ経由に矯正する。 */
 var BASE_URL=null;try{BASE_URL=new URL(BASE);}catch(e){}
+
+/* --- document.cookie の付け替え ---
+   上流の Cookie はサーバー側(HttpOnly)で保持しているため、そのままでは
+   ページの JS から読めない。Instagram のように csrftoken を document.cookie から
+   読んで X-CSRFToken ヘッダに載せるサイトは、これが無いと必ずログインに失敗する。
+   逆に素の document.cookie には他サイトが書いた Cookie まで見えてしまう。
+   そこで「このサイトの Cookie だけ」を見せ、書き込みも受け取るようにする。 */
+var COOKIE_JAR=${COOKIES};
+var COOKIE_STORE_NAME=${JSJAR};
+var NATIVE_COOKIE=null;
+try{
+  NATIVE_COOKIE=Object.getOwnPropertyDescriptor(Document.prototype,"cookie")||
+                Object.getOwnPropertyDescriptor(HTMLDocument.prototype,"cookie");
+}catch(e){}
+function bwCookieString(){
+  var out=[];
+  for(var k in COOKIE_JAR){ if(Object.prototype.hasOwnProperty.call(COOKIE_JAR,k)) out.push(k+"="+COOKIE_JAR[k]); }
+  return out.join("; ");
+}
+function bwPersistCookies(){
+  if(!NATIVE_COOKIE||!NATIVE_COOKIE.set||!COOKIE_STORE_NAME)return;
+  var sp=[];
+  for(var k in COOKIE_JAR){
+    if(Object.prototype.hasOwnProperty.call(COOKIE_JAR,k))
+      sp.push(encodeURIComponent(k)+"="+encodeURIComponent(COOKIE_JAR[k]));
+  }
+  var v=COOKIE_STORE_NAME+"="+encodeURIComponent(sp.join("&"))+
+        "; Path=/; Max-Age=86400; SameSite=Lax"+(location.protocol==="https:"?"; Secure":"");
+  try{NATIVE_COOKIE.set.call(document,v);}catch(e){}
+}
+if(NATIVE_COOKIE&&NATIVE_COOKIE.configurable){
+  try{
+    Object.defineProperty(document,"cookie",{
+      configurable:true,
+      get:function(){return bwCookieString();},
+      set:function(v){
+        var s=String(v);
+        var semi=s.indexOf(";");
+        var pair=semi<0?s:s.slice(0,semi);
+        var eq=pair.indexOf("=");
+        if(eq<0)return;
+        var name=pair.slice(0,eq).trim();
+        var val=pair.slice(eq+1).trim();
+        if(!name)return;
+        var attrs=(semi<0?"":s.slice(semi+1)).toLowerCase();
+        var gone=/max-age\s*=\s*-?0*(?![1-9])/.test(attrs);
+        if(!gone){
+          var m=/expires\s*=\s*([^;]+)/.exec(attrs);
+          if(m){var t=Date.parse(m[1]);if(!isNaN(t)&&t<=Date.now())gone=true;}
+        }
+        if(gone||val==="")delete COOKIE_JAR[name];
+        else COOKIE_JAR[name]=val;
+        bwPersistCookies();
+      }
+    });
+  }catch(e){}
+}
 
 /* --- パスでルーティングする SPA 対策 ---
    X(旧Twitter)のような SPA は location.pathname を見て表示を決める。

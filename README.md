@@ -69,6 +69,12 @@ npx wrangler dev
   自オリジンには完全な Referer を送りつつ外部へは一切送らないようにしている
 - **Cookie**: 上流の `Set-Cookie` を登録可能ドメイン単位でまとめ、自オリジンの
   `bwcj_<domain>` cookie (HttpOnly) に保存して次回リクエストで送り返す
+- **`document.cookie` の付け替え**: 上流の Cookie はサーバー側で保持しているため
+  そのままではページの JS から読めない。Instagram のように `csrftoken` を
+  `document.cookie` から読んで `X-CSRFToken` に載せるサイトは、これが無いと
+  必ずログインに失敗する。逆に素の `document.cookie` には他サイトが書いた Cookie まで
+  見えてしまう。そこでシムで **そのサイトの Cookie だけ** を見せ、
+  書き込みは `bwjs_<domain>` cookie に保存して次回リクエストへ合流させる
 - **埋め込み阻害ヘッダ**: `X-Frame-Options` / `Content-Security-Policy` /
   `Cross-Origin-*-Policy` などを除去する
 - **文字コード**: `Content-Type` に charset が無い場合は本文先頭の `<meta charset>` を
